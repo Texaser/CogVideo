@@ -3,7 +3,8 @@ args:
   model_parallel_size: 1
   experiment_name: lora-disney
   mode: finetune
-  load: "cogvideox-2b-sat/transformer"
+  # load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-5b-sat/transformer"
+  load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-2b-sat/transformer"
   no_load_rng: True
   train_iters: 1000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
@@ -12,8 +13,8 @@ args:
   save: ckpts_2b_lora
   save_interval: 500
   log_interval: 20
-  train_data: [ "disney" ] # Train data path
-  valid_data: [ "disney" ] # Validation data path, can be the same as train_data(not recommended)
+  train_data: [ "/mnt/bum/hanyi/repo/CogVideo/data1" ] # Train data path
+  valid_data: [ "/mnt/bum/hanyi/repo/CogVideo/data1" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
   num_workers: 8
   force_train: True
@@ -29,7 +30,7 @@ data:
 
 deepspeed:
   # Minimun for 16 videos per batch for ALL GPUs, This setting is for 8 x A100 GPUs
-  train_micro_batch_size_per_gpu: 2
+  train_micro_batch_size_per_gpu: 1
   gradient_accumulation_steps: 1
   steps_per_print: 50
   gradient_clipping: 0.1

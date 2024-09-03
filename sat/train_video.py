@@ -57,6 +57,7 @@ def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, T: int
 
 
 def log_video(batch, model, args, only_log_video_latents=False):
+    # print(batch)
     texts = batch["txt"]
     text_save_dir = os.path.join(args.save, "video_texts")
     os.makedirs(text_save_dir, exist_ok=True)

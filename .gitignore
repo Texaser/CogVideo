@@ -8,3 +8,10 @@ logs/
 .idea
 output*
 test*
+data/
+data1/
+CogVideoX-2b/
+sat/CogVideoX-2b-sat/
+sat/CogVideoX-5b-sat/
+sat/ckpts_2b_lora/
+sat/t5-v1_1-xxl/

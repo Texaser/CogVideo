@@ -1,0 +1,2 @@
+# CUDA_VISIBLE_DEVICES=5,6 python inference/cli_demo.py --prompt "A high-quality basketball game." --model_path THUDM/CogVideoX-5b
+CUDA_VISIBLE_DEVICES=5,6 python inference/cli_demo.py --prompt "A thrilling basketball game in a packed arena, with players executing precise moves." --model_path THUDM/CogVideoX-5b

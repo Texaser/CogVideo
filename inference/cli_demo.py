@@ -43,6 +43,7 @@ def generate_video(
     # add device_map="balanced" in the from_pretrained function and remove the enable_model_cpu_offload()
     # function to use Multi GPUs.
 
+    # pipe = CogVideoXPipeline.from_pretrained(model_path, torch_dtype=dtype, device_map="balanced")
     pipe = CogVideoXPipeline.from_pretrained(model_path, torch_dtype=dtype)
 
     # 2. Set Scheduler.
