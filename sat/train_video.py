@@ -202,12 +202,12 @@ if __name__ == "__main__":
         os.environ["LOCAL_RANK"] = os.environ["OMPI_COMM_WORLD_LOCAL_RANK"]
         os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
         os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
-
+    
     py_parser = argparse.ArgumentParser(add_help=False)
     known, args_list = py_parser.parse_known_args()
     args = get_args(args_list)
     args = argparse.Namespace(**vars(args), **vars(known))
-
+    print(args)
     data_class = get_obj_from_str(args.data_config["target"])
     create_dataset_function = partial(data_class.create_dataset_function, **args.data_config["params"])
 

@@ -279,3 +279,67 @@ class FrozenT5Embedder(AbstractEmbModel):
 
     def encode(self, text):
         return self(text)
+
+
+class PrecomputedT5Embedder(AbstractEmbModel):
+    """Uses precomputed T5 transformer embeddings for text"""
+
+    def __init__(
+        self,
+        model_dir="",
+        device="cuda",
+        max_length=77,
+        freeze=True,
+        cache_dir=None,
+    ):
+        super().__init__()
+        self.device = device
+        self.embeddings = torch.load('action_embs.pth').to(self.device).requires_grad_(False)
+
+        self.basketball_actions = [
+            "",
+            "A basketball player missing a three-point shot",
+            "A basketball player assisting on a play",
+            "A basketball player setting a screen",
+            "A basketball player grabbing a rebound",
+            "A basketball player committing a turnover",
+            "A basketball player making a free throw",
+            "A basketball player missing a free throw",
+            "A basketball player scoring and being fouled",
+            "A basketball player missing a two-point shot",
+            "A basketball player making a two-point shot",
+            "A basketball player committing a foul",
+            "A basketball player executing a pick and roll",
+            "A basketball player posting up",
+            "A basketball player stealing the ball",
+            "A basketball player receiving a technical foul",
+            "A basketball player making a three-point shot",
+            "A basketball player committing their second foul",
+            "A basketball player committing their third foul",
+            "A basketball player committing an unsportsmanlike foul",
+            "A basketball player making a three-pointer and being fouled",
+            "A basketball player getting a second chance opportunity",
+            "A basketball player making two free throws",
+            "A basketball player missing two free throws",
+            "A basketball player making three free throws",
+            "A basketball player missing three free throws",
+            "A basketball player committing a disqualifying foul"
+        ]
+
+        self.action_to_index = {action: i for i, action in enumerate(self.basketball_actions)}
+
+    def get_embeddings_from_prompts(self, prompts, embeddings):
+        indices = np.array([self.action_to_index[prompt] for prompt in prompts])
+        assert len(indices) == len(prompts), f"Not all prompts found in action_to_index. Missing: {set(prompts) - set(self.action_to_index.keys())}"
+        
+        indices_tensor = torch.from_numpy(indices).to(self.device)
+        filtered_embeddings = torch.index_select(embeddings, 0, indices_tensor)
+        
+        return filtered_embeddings
+
+    # @autocast
+    def forward(self, text):
+        return self.get_embeddings_from_prompts(text, self.embeddings)
+
+    def encode(self, text):
+        return self(text)
