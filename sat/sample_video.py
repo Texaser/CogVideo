@@ -1,4 +1,5 @@
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import math
 import argparse
 from typing import List, Union

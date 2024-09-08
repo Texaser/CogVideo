@@ -1,7 +1,9 @@
 args:
   latent_channels: 16
   mode: inference
-  load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-5b-sat/transformer" # This is for Full model without lora adapter
+  # load: "/mnt/bum/hanyi/repo/CogVideo/sat/ckpts_5b_lora/5b_lora-09-04-15-03" # This is for Full model without lora adapter
+  # load: "/mnt/bum/hanyi/repo/CogVideo/sat/ckpts_5b_lora/5b_lora_subset-09-04-22-52" # This is for Full model without lora adapter
+  load: "/mnt/bum/hanyi/repo/CogVideo/sat/ckpts_5b_lora/5b_lora_subset-09-04-22-52" # This is for Full model without lora adapter
   # load: "{your lora folder} such as zRzRzRzRzRzRzR/lora-disney-08-20-13-28" # This is for Full model without lora adapter
 
   batch_size: 1
@@ -9,7 +11,7 @@ args:
   input_file: configs/test.txt
   sampling_num_frames: 13  # Must be 13, 11 or 9
   sampling_fps: 8
-  fp16: True # For CogVideoX-2B
-  # bf16: True # For CogVideoX-5B
-  output_dir: outputs/
+  # fp16: True # For CogVideoX- 2B
+  bf16: True # For CogVideoX-5B
+  output_dir: results/5b-lora-finetune-hq-Dataset-subset/
   force_inference: True

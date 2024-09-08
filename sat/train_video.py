@@ -17,7 +17,6 @@ from diffusion_video import SATVideoDiffusionEngine
 from arguments import get_args
 
 from einops import rearrange
-
 try:
     import wandb
 except ImportError:
