@@ -75,20 +75,26 @@ model:
   conditioner_config:
     target: sgm.modules.GeneralConditioner
     params:
+      # emb_models:
+      #   - is_trainable: false
+      #     input_key: txt
+      #     ucg_rate: 0.1
+      #     target: sgm.modules.encoders.modules.FrozenT5Embedder
+      #     params:
+      #       model_dir: "t5-v1_1-xxl"
+      #       max_length: 226
       emb_models:
         - is_trainable: false
           input_key: txt
           ucg_rate: 0.1
-          target: sgm.modules.encoders.modules.FrozenT5Embedder
+          target: sgm.modules.encoders.modules.PrecomputedT5Embedder
           params:
-            model_dir: "t5-v1_1-xxl"
             max_length: 226
-
   first_stage_config:
     target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
     params:
       cp_size: 1
-      ckpt_path: "cogvideox-2b-sat/vae/3d-vae.pt"
+      ckpt_path: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-5b-sat/vae/3d-vae.pt"
       ignore_keys: [ 'loss' ]
 
       loss_config:

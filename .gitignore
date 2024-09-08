@@ -8,3 +8,5 @@ logs/
 .idea
 output*
 test*
+sat/wandb/
+sat/ckpts_2b_lora/
