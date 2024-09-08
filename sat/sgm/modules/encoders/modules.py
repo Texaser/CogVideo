@@ -3,6 +3,7 @@ from contextlib import nullcontext
 from functools import partial
 from typing import Dict, List, Optional, Tuple, Union
 
+import os
 import kornia
 import numpy as np
 import torch
@@ -294,7 +295,13 @@ class PrecomputedT5Embedder(AbstractEmbModel):
     ):
         super().__init__()
         self.device = device
-        self.embeddings = torch.load('action_embs.pth').to(self.device).requires_grad_(False)
+
+        self.local_rank = int(os.environ.get("LOCAL_RANK", -1))
+        if self.local_rank != -1:
+            torch.cuda.set_device(self.local_rank)
+        # first load to cpu
+        embeddings = torch.load('action_embs.pth', map_location='cpu')
+        self.embeddings = embeddings.to(self.local_rank).requires_grad_(False)
 
         self.basketball_actions = [
             "",
@@ -332,7 +339,7 @@ class PrecomputedT5Embedder(AbstractEmbModel):
         indices = np.array([self.action_to_index[prompt] for prompt in prompts])
         assert len(indices) == len(prompts), f"Not all prompts found in action_to_index. Missing: {set(prompts) - set(self.action_to_index.keys())}"
         
-        indices_tensor = torch.from_numpy(indices).to(self.device)
+        indices_tensor = torch.from_numpy(indices).to(self.local_rank)
         filtered_embeddings = torch.index_select(embeddings, 0, indices_tensor)
         
         return filtered_embeddings
