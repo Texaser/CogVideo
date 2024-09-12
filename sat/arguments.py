@@ -24,7 +24,6 @@ def add_model_config_args(parser):
     group.add_argument("--device", type=int, default=-1)
     group.add_argument("--debug", action="store_true")
     group.add_argument("--log-image", type=bool, default=True)
-
     return parser
 
 
@@ -47,7 +46,6 @@ def add_sampling_config_args(parser):
     group.add_argument("--only-log-video-latents", type=bool, default=False)
     group.add_argument("--latent-channels", type=int, default=32)
     group.add_argument("--image2video", action="store_true")
-
     return parser
 
 

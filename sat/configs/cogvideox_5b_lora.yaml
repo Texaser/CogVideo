@@ -10,7 +10,6 @@ model:
     params:
       num_idx: 1000
       quantize_c_noise: False
-
       weighting_config:
         target: sgm.modules.diffusionmodules.denoiser_weighting.EpsWeighting
       scaling_config:

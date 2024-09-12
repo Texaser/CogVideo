@@ -72,6 +72,7 @@ class AbstractEmbModel(nn.Module):
 
 
 class GeneralConditioner(nn.Module):
+    
     OUTPUT_DIM2KEYS = {2: "vector", 3: "crossattn", 4: "concat", 5: "concat"}
     KEY2CATDIM = {"vector": 1, "crossattn": 2, "concat": 1}
 
@@ -339,7 +340,6 @@ class PrecomputedT5Embedder(AbstractEmbModel):
 
         indices_tensor = torch.from_numpy(indices).to(self.local_rank)
         filtered_embeddings = torch.index_select(embeddings, 0, indices_tensor)
-
         return filtered_embeddings
 
     # @autocast

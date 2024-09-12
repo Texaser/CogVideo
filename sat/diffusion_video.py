@@ -22,6 +22,7 @@ from sat import mpu
 
 
 class SATVideoDiffusionEngine(nn.Module):
+    
     def __init__(self, args, **kwargs):
         super().__init__()
 
@@ -74,12 +75,12 @@ class SATVideoDiffusionEngine(nn.Module):
             model, compile_model=compile_model, dtype=dtype
         )
 
+        # these are important modules
         self.denoiser = instantiate_from_config(denoiser_config)
         self.sampler = instantiate_from_config(sampler_config) if sampler_config is not None else None
         self.conditioner = instantiate_from_config(default(conditioner_config, UNCONDITIONAL_CONFIG))
 
         self._init_first_stage(first_stage_config)
-
         self.loss_fn = instantiate_from_config(loss_fn_config) if loss_fn_config is not None else None
 
         self.latent_input = latent_input
@@ -125,25 +126,41 @@ class SATVideoDiffusionEngine(nn.Module):
         self.first_stage_model = model
 
     def forward(self, x, batch):
+        """
+        Forward pass of the diffusion model.
+        """
+        
+        # calculate the loss
         loss = self.loss_fn(self.model, self.denoiser, self.conditioner, x, batch)
         loss_mean = loss.mean()
         loss_dict = {"loss": loss_mean}
         return loss_mean, loss_dict
 
     def shared_step(self, batch: Dict) -> Any:
+        """
+        One forward training step, guess that this func supports dist training.
+        """
+        
+        # TODO: what is the format of `batch`?
         x = self.get_input(batch)
+        
         if self.lr_scale is not None:
+            # downsample
             lr_x = F.interpolate(x, scale_factor=1 / self.lr_scale, mode="bilinear", align_corners=False)
+            # upsample
             lr_x = F.interpolate(lr_x, scale_factor=self.lr_scale, mode="bilinear", align_corners=False)
+            # encode input x -> latent: z
             lr_z = self.encode_first_stage(lr_x, batch)
             batch["lr_input"] = lr_z
 
         x = x.permute(0, 2, 1, 3, 4).contiguous()
+        # encode video (x) -> latent (z)
         x = self.encode_first_stage(x, batch)
         x = x.permute(0, 2, 1, 3, 4).contiguous()
 
         gc.collect()
         torch.cuda.empty_cache()
+        # TODO: perform forward pass
         loss, loss_dict = self(x, batch)
         return loss, loss_dict
 
@@ -169,23 +186,34 @@ class SATVideoDiffusionEngine(nn.Module):
         return out
 
     @torch.no_grad()
-    def encode_first_stage(self, x, batch):
+    def encode_first_stage(self, x: torch.Tensor, batch):
+        """
+        Encode an input batch of videos `x` using a 3D-VAE.
+        """
+        
+        # x[0]: B: Batch size
+        #       T: number of frames
         frame = x.shape[2]
-
+        # if input is a video and latent, we skip encoding
         if frame > 1 and self.latent_input:
+            # .contiguous() ensures that a tensor is layed out in a uniform block of memory
             x = x.permute(0, 2, 1, 3, 4).contiguous()
             return x * self.scale_factor  # already encoded
 
         use_cp = False
-
         n_samples = default(self.en_and_decode_n_samples_a_time, x.shape[0])
+        # ceil(Batch Size / # Samples)
         n_rounds = math.ceil(x.shape[0] / n_samples)
+        # all encoded outputs
         all_out = []
         with torch.autocast("cuda", enabled=not self.disable_first_stage_autocast):
             for n in range(n_rounds):
+                # encode a batch of samples
+                # encode video, normally using a VAE
                 out = self.first_stage_model.encode(x[n * n_samples : (n + 1) * n_samples])
                 all_out.append(out)
         z = torch.cat(all_out, dim=0)
+        # scale by a pre-determined constant
         z = self.scale_factor * z
         return z
 

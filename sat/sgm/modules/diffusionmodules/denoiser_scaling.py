@@ -49,10 +49,13 @@ class VScalingWithEDMcNoise(DenoiserScaling):
         return c_skip, c_out, c_in, c_noise
 
 
-class VideoScaling:  # similar to VScaling
+class VideoScaling:
     def __call__(
         self, alphas_cumprod_sqrt: torch.Tensor, **additional_model_inputs
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        https://arxiv.org/pdf/2002.11546
+        """
         c_skip = alphas_cumprod_sqrt
         c_out = -((1 - alphas_cumprod_sqrt**2) ** 0.5)
         c_in = torch.ones_like(alphas_cumprod_sqrt, device=alphas_cumprod_sqrt.device)

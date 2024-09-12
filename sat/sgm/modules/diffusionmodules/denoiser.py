@@ -30,12 +30,23 @@ class Denoiser(nn.Module):
         cond: Dict,
         **additional_model_inputs,
     ) -> torch.Tensor:
+        
         sigma = self.possibly_quantize_sigma(sigma)
         sigma_shape = sigma.shape
+        
+        # pad sigma to match the `input` dim
         sigma = append_dims(sigma, input.ndim)
+        
+        # c_skip: un-altered portion of the original input
+        # c_in: scaling factor applied input before being processed by network
+        # c_out: network scaling factor
+        # c_noise: noise vector, constant?
         c_skip, c_out, c_in, c_noise = self.scaling(sigma, **additional_model_inputs)
         c_noise = self.possibly_quantize_c_noise(c_noise.reshape(sigma_shape))
-        return network(input * c_in, c_noise, cond, **additional_model_inputs) * c_out + input * c_skip
+        return (
+            network(input * c_in, c_noise, cond, **additional_model_inputs) * c_out
+            + input * c_skip
+        )
 
 
 class DiscreteDenoiser(Denoiser):
@@ -49,8 +60,13 @@ class DiscreteDenoiser(Denoiser):
         quantize_c_noise=True,
         flip=True,
     ):
+        """
+        https://arxiv.org/pdf/2107.03006
+        """
         super().__init__(weighting_config, scaling_config)
-        sigmas = instantiate_from_config(discretization_config)(num_idx, do_append_zero=do_append_zero, flip=flip)
+        sigmas = instantiate_from_config(discretization_config)(
+            num_idx, do_append_zero=do_append_zero, flip=flip
+        )
         self.sigmas = sigmas
         # self.register_buffer("sigmas", sigmas)
         self.quantize_c_noise = quantize_c_noise

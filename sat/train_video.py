@@ -1,27 +1,23 @@
 import os
 import argparse
-from functools import partial
+import torch
 import numpy as np
 import torch.distributed
-from omegaconf import OmegaConf
 import imageio
+import wandb
+import warnings
 
-import torch
+from omegaconf import OmegaConf
+from functools import partial
 
 from sat import mpu
 from sat.training.deepspeed_training import training_main
-
 from sgm.util import get_obj_from_str, isheatmap
-
 from diffusion_video import SATVideoDiffusionEngine
 from arguments import get_args
-
 from einops import rearrange
-try:
-    import wandb
-except ImportError:
-    print("warning: wandb not installed")
 
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 def print_debug(args, s):
     if args.debug:
@@ -30,15 +26,22 @@ def print_debug(args, s):
 
 
 def save_texts(texts, save_dir, iterations):
+    """
+    TODO: Some logging thing?
+    """
     output_path = os.path.join(save_dir, f"{str(iterations).zfill(8)}")
     with open(output_path, "w", encoding="utf-8") as f:
         for text in texts:
             f.write(text + "\n")
 
 
-def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, T: int, fps: int = 5, args=None, key=None):
+def save_video_as_grid_and_mp4(
+    video_batch: torch.Tensor, save_path: str, T: int, fps: int = 5, args=None, key=None
+):
+    """
+    Tensor -> MP4 logging func.
+    """
     os.makedirs(save_path, exist_ok=True)
-
     for i, vid in enumerate(video_batch):
         gif_frames = []
         for frame in vid:
@@ -51,11 +54,18 @@ def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, T: int
                 writer.append_data(frame)
         if args is not None and args.wandb:
             wandb.log(
-                {key + f"_video_{i}": wandb.Video(now_save_path, fps=fps, format="mp4")}, step=args.iteration + 1
+                {
+                    key
+                    + f"_video_{i}": wandb.Video(now_save_path, fps=fps, format="mp4")
+                },
+                step=args.iteration + 1,
             )
 
 
 def log_video(batch, model, args, only_log_video_latents=False):
+    """
+    Video logging func.
+    """
     # print(batch)
     texts = batch["txt"]
     text_save_dir = os.path.join(args.save, "video_texts")
@@ -106,21 +116,41 @@ def log_video(batch, model, args, only_log_video_latents=False):
 
                     path = os.path.join(root, filename)
                     os.makedirs(os.path.split(path)[0], exist_ok=True)
-                    save_video_as_grid_and_mp4(samples, path, num_frames // fps, fps, args, k)
+                    save_video_as_grid_and_mp4(
+                        samples, path, num_frames // fps, fps, args, k
+                    )
 
 
 def broad_cast_batch(batch):
+    """
+    adds support for multi-node (i.e., seperate machine) training
+    docs: https://pytorch.org/docs/stable/distributed.html
+
+    batch: {
+        "mp4": None,
+        "fps": None,
+        "num_frames": None,
+    }
+    """
+
     mp_size = mpu.get_model_parallel_world_size()
     global_rank = torch.distributed.get_rank() // mp_size
+
     src = global_rank * mp_size
 
     if batch["mp4"] is not None:
-        broadcast_shape = [batch["mp4"].shape, batch["fps"].shape, batch["num_frames"].shape]
+        broadcast_shape = [
+            batch["mp4"].shape,
+            batch["fps"].shape,
+            batch["num_frames"].shape,
+        ]
     else:
         broadcast_shape = None
 
     txt = [batch["txt"], broadcast_shape]
-    torch.distributed.broadcast_object_list(txt, src=src, group=mpu.get_model_parallel_group())
+    torch.distributed.broadcast_object_list(
+        txt, src=src, group=mpu.get_model_parallel_group()
+    )
     batch["txt"] = txt[0]
 
     mp4_shape = txt[1][0]
@@ -130,40 +160,66 @@ def broad_cast_batch(batch):
     if mpu.get_model_parallel_rank() != 0:
         batch["mp4"] = torch.zeros(mp4_shape, device="cuda")
         batch["fps"] = torch.zeros(fps_shape, device="cuda", dtype=torch.long)
-        batch["num_frames"] = torch.zeros(num_frames_shape, device="cuda", dtype=torch.long)
+        batch["num_frames"] = torch.zeros(
+            num_frames_shape, device="cuda", dtype=torch.long
+        )
 
-    torch.distributed.broadcast(batch["mp4"], src=src, group=mpu.get_model_parallel_group())
-    torch.distributed.broadcast(batch["fps"], src=src, group=mpu.get_model_parallel_group())
-    torch.distributed.broadcast(batch["num_frames"], src=src, group=mpu.get_model_parallel_group())
+    torch.distributed.broadcast(
+        batch["mp4"], src=src, group=mpu.get_model_parallel_group()
+    )
+    torch.distributed.broadcast(
+        batch["fps"], src=src, group=mpu.get_model_parallel_group()
+    )
+    torch.distributed.broadcast(
+        batch["num_frames"], src=src, group=mpu.get_model_parallel_group()
+    )
     return batch
 
 
-def forward_step_eval(data_iterator, model, args, timers, only_log_video_latents=False, data_class=None):
+def forward_step_eval(
+    data_iterator, model: SATVideoDiffusionEngine, args, timers, only_log_video_latents=False, data_class=None
+):
+    
+    # if on device:0, start the timer
     if mpu.get_model_parallel_rank() == 0:
         timers("data loader").start()
         batch_video = next(data_iterator)
         timers("data loader").stop()
 
+        # wierd hard-coded thing
         if len(batch_video["mp4"].shape) == 6:
             b, v = batch_video["mp4"].shape[:2]
-            batch_video["mp4"] = batch_video["mp4"].view(-1, *batch_video["mp4"].shape[2:])
+            batch_video["mp4"] = batch_video["mp4"].view(
+                -1, *batch_video["mp4"].shape[2:]
+            )
+            # text-prompts for a vid
             txt = []
             for i in range(b):
                 for j in range(v):
                     txt.append(batch_video["txt"][j][i])
             batch_video["txt"] = txt
 
+        # batch_video is a dict
+        # find the tensors and copy them to the gpu
         for key in batch_video:
             if isinstance(batch_video[key], torch.Tensor):
                 batch_video[key] = batch_video[key].cuda()
     else:
         batch_video = {"mp4": None, "fps": None, "num_frames": None, "txt": None}
+    
+    # for distributed training runs?
     broad_cast_batch(batch_video)
+    # log video on the first rank (i.e., push to wandb)
     if mpu.get_data_parallel_rank() == 0:
-        log_video(batch_video, model, args, only_log_video_latents=only_log_video_latents)
+        log_video(
+            batch_video, model, args, only_log_video_latents=only_log_video_latents
+        )
 
+    # what is the model var?    
     batch_video["global_step"] = args.iteration
     loss, loss_dict = model.shared_step(batch_video)
+    
+    # HACK: again, wtf is going here?
     for k in loss_dict:
         if loss_dict[k].dtype == torch.bfloat16:
             loss_dict[k] = loss_dict[k].to(torch.float32)
@@ -184,7 +240,9 @@ def forward_step(data_iterator, model, args, timers, data_class=None):
                 configs = [OmegaConf.load(cfg) for cfg in args.base]
                 config = OmegaConf.merge(*configs)
                 os.makedirs(args.save, exist_ok=True)
-                OmegaConf.save(config=config, f=os.path.join(args.save, "training_config.yaml"))
+                OmegaConf.save(
+                    config=config, f=os.path.join(args.save, "training_config.yaml")
+                )
     else:
         batch = {"mp4": None, "fps": None, "num_frames": None, "txt": None}
 
@@ -209,7 +267,9 @@ if __name__ == "__main__":
     args = argparse.Namespace(**vars(args), **vars(known))
 
     data_class = get_obj_from_str(args.data_config["target"])
-    create_dataset_function = partial(data_class.create_dataset_function, **args.data_config["params"])
+    create_dataset_function = partial(
+        data_class.create_dataset_function, **args.data_config["params"]
+    )
 
     import yaml
 
@@ -225,7 +285,9 @@ if __name__ == "__main__":
         model_cls=SATVideoDiffusionEngine,
         forward_step_function=partial(forward_step, data_class=data_class),
         forward_step_eval=partial(
-            forward_step_eval, data_class=data_class, only_log_video_latents=args.only_log_video_latents
+            forward_step_eval,
+            data_class=data_class,
+            only_log_video_latents=args.only_log_video_latents,
         ),
         create_dataset_function=create_dataset_function,
     )

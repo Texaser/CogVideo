@@ -73,12 +73,16 @@ class AbstractAutoencoder(pl.LightningModule):
         self.init_from_ckpt(ckpt)
 
     def init_from_ckpt(self, path, ignore_keys=list()):
+        """
+        Init the auto-encoder from a `path`.
+        """
+        
         sd = torch.load(path, map_location="cpu")["state_dict"]
         keys = list(sd.keys())
         for k in keys:
             for ik in ignore_keys:
                 if k.startswith(ik):
-                    print("Deleting key {} from state_dict.".format(k))
+                    # print("Deleting key {} from state_dict.".format(k))
                     del sd[k]
         missing_keys, unexpected_keys = self.load_state_dict(sd, strict=False)
         print("Missing keys: ", missing_keys)
@@ -567,7 +571,7 @@ class VideoAutoencodingEngine(AutoencodingEngine):
         for k in keys:
             for ik in ignore_keys:
                 if k.startswith(ik):
-                    print("Deleting key {} from state_dict.".format(k))
+                    # print("Deleting key {} from state_dict.".format(k))
                     del sd[k]
         missing_keys, unexpected_keys = self.load_state_dict(sd, strict=False)
         print("Missing keys: ", missing_keys)
