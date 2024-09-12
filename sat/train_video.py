@@ -16,6 +16,7 @@ from sgm.util import get_obj_from_str, isheatmap
 from diffusion_video import SATVideoDiffusionEngine
 from arguments import get_args
 from einops import rearrange
+from data_video import SFTDataset
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -276,7 +277,7 @@ if __name__ == "__main__":
     # get data class object
     # todo: what type of obj is this?
     breakpoint()
-    data_class = get_obj_from_str(args.data_config["target"])
+    data_class: SFTDataset = get_obj_from_str(args.data_config["target"])
     create_dataset_function = partial(
         data_class.create_dataset_function, **args.data_config["params"]
     )

@@ -39,6 +39,7 @@ deepspeed:
   gradient_accumulation_steps: 1
   steps_per_print: 50
   gradient_clipping: 0.1
+  
   # https://arxiv.org/pdf/1910.02054v3 
   zero_optimization:
     stage: 2
@@ -77,5 +78,5 @@ deepspeed:
   activation_checkpointing:
     partition_activations: false
     contiguous_memory_optimization: false
-    
+
   wall_clock_breakdown: false

@@ -361,22 +361,22 @@ class SFTDataset(Dataset):
         """
         skip_frms_num: ignore the first and the last xx frames, avoiding transitions.
         """
-        super(SFTDataset, self).__init__()
         
+        super(SFTDataset, self).__init__()
         self.video_size = video_size
         self.fps = fps
         self.max_num_frames = max_num_frames
         self.skip_frms_num = skip_frms_num
-
         self.video_paths = []
         self.captions = []
 
+        # no one knows about glob ig (:
+        # should be very very easy to add my data
         for root, dirnames, filenames in os.walk(data_dir):
             for filename in filenames:
                 if filename.endswith(".mp4"):
                     video_path = os.path.join(root, filename)
                     self.video_paths.append(video_path)
-
                     caption_path = video_path.replace(".mp4", ".txt").replace("videos", "labels")
                     if os.path.exists(caption_path):
                         caption = open(caption_path, "r").read().splitlines()[0]
@@ -387,7 +387,6 @@ class SFTDataset(Dataset):
     def __getitem__(self, index):
         
         decord.bridge.set_bridge("torch")
-
         video_path = self.video_paths[index]
         vr = VideoReader(uri=video_path, height=-1, width=-1)
         actual_fps = vr.get_avg_fps()
