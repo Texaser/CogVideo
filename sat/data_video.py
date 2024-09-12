@@ -381,11 +381,7 @@ class SFTDataset(Dataset):
 
         with tqdm(total=total_files, desc="Loading Data") as pbar:
             for root, dirnames, filenames in os.walk(data_dir):
-                if len(self.video_paths) >= 10:
-                    break
                 for filename in filenames:
-                    if len(self.video_paths) >= 10:
-                        break
                     if filename.endswith(".json"):
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
