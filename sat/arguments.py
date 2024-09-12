@@ -59,12 +59,13 @@ def get_args(args_list=None, parser=None):
     parser = add_sampling_config_args(parser)
     parser = add_training_args(parser)
     parser = add_evaluation_args(parser)
+    
+    # we just provide a path to a list of videos at the moment
     parser = add_data_args(parser)
 
     import deepspeed
 
     parser = deepspeed.add_config_arguments(parser)
-
     args = parser.parse_args(args_list)
     args = process_config_to_args(args)
 
@@ -98,6 +99,7 @@ def get_args(args_list=None, parser=None):
             "Please use CUDA_VISIBLE_DEVICES=x for single-GPU training. "
         )
 
+    # world size: # gpus
     if args.rank == 0:
         print_rank0("using world size: {}".format(args.world_size))
 
@@ -118,11 +120,13 @@ def get_args(args_list=None, parser=None):
 
     assert not (args.fp16 and args.bf16), "cannot specify both fp16 and bf16."
 
+    # default values for zero_stage and precision
     if args.zero_stage > 0 and not args.fp16 and not args.bf16:
         print_rank0("Automatically set fp16=True to use ZeRO.")
         args.fp16 = True
         args.bf16 = False
 
+    # deepspeed args setup
     if args.deepspeed:
         if args.checkpoint_activations:
             args.deepspeed_activation_checkpointing = True
@@ -167,7 +171,7 @@ def get_args(args_list=None, parser=None):
                 args.weight_decay = optimizer_params_config.get("weight_decay", args.weight_decay)
         args.deepspeed_config = deepspeed_config
 
-    # initialize distributed and random seed because it always seems to be necessary.
+    # HACK: initialize distributed and random seed because it always seems to be necessary.
     initialize_distributed(args)
     args.seed = args.seed + mpu.get_data_parallel_rank()
     set_random_seed(args.seed)

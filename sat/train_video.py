@@ -227,8 +227,12 @@ def forward_step_eval(
 
 
 def forward_step(data_iterator, model, args, timers, data_class=None):
+    """
+    Forward training step.
+    """
     if mpu.get_model_parallel_rank() == 0:
         timers("data loader").start()
+        # where is the dataloader obj defined?
         batch = next(data_iterator)
         timers("data loader").stop()
         for key in batch:
@@ -256,23 +260,28 @@ def forward_step(data_iterator, model, args, timers, data_class=None):
 
 
 if __name__ == "__main__":
+    
+    # set some global vars for distributed training
     if "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ:
         os.environ["LOCAL_RANK"] = os.environ["OMPI_COMM_WORLD_LOCAL_RANK"]
         os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
         os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
 
+    # parse args
     py_parser = argparse.ArgumentParser(add_help=False)
     known, args_list = py_parser.parse_known_args()
     args = get_args(args_list)
     args = argparse.Namespace(**vars(args), **vars(known))
 
+    # get data class object
+    # todo: what type of obj is this?
+    breakpoint()
     data_class = get_obj_from_str(args.data_config["target"])
     create_dataset_function = partial(
         data_class.create_dataset_function, **args.data_config["params"]
     )
 
     import yaml
-
     configs = []
     for config in args.base:
         with open(config, "r") as f:
