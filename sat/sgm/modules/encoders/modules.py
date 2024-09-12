@@ -73,7 +73,7 @@ class AbstractEmbModel(nn.Module):
 
 class GeneralConditioner(nn.Module):
     OUTPUT_DIM2KEYS = {2: "vector", 3: "crossattn", 4: "concat", 5: "concat"}
-    KEY2CATDIM = {"vector": 1, "crossattn": 2, "concat": 1}
+    KEY2CATDIM = {"vector": 1, "crossattn": 1, "concat": 1}
 
     def __init__(self, emb_models: Union[List, ListConfig], cor_embs=[], cor_p=[]):
         super().__init__()
@@ -367,7 +367,6 @@ class FourierEmbedder():
             out.append( torch.cos( freq*x ) )
         return torch.cat(out, cat_dim)
 
-
 class TrackletEmbedder(AbstractEmbModel):
     """Simple encoder for bounding box tracklets."""
 
@@ -376,49 +375,50 @@ class TrackletEmbedder(AbstractEmbModel):
         out_dim,
         fourier_freqs=8,
         num_tracklets=10,
+        use_bf16=False,
         device="cuda",
     ):
         super().__init__()
         self.device = device
         self.out_dim = out_dim 
         self.num_tracklets = num_tracklets
+        self.dtype = torch.bfloat16 if use_bf16 else torch.float16
 
         self.fourier_embedder = FourierEmbedder(num_freqs=fourier_freqs)
         self.position_dim = fourier_freqs*2*4 # 2 is sin&cos, 4 is xyxy 
 
-        self.temporal_conv = nn.Conv2d(self.position_dim + 64, 256, kernel_size=(3,1), padding=(1,0))
+        self.temporal_conv = nn.Conv2d(self.position_dim + 64, 256, kernel_size=(3,1), padding=(1,0), dtype=self.dtype)
 
-        self.tracklet_embeddings = nn.Parameter(torch.randn(num_tracklets, 64)) # fourier_freqs*2*4
+        self.tracklet_embeddings = nn.Parameter(torch.randn(num_tracklets, 64, dtype=self.dtype))
         self.mlp = nn.Sequential(
-            nn.Linear( 256, 512), # fourier_freqs*2*4
+            nn.Linear(256, 512, dtype=self.dtype),
             nn.SiLU(),
-            nn.Linear( 512, 512),
+            nn.Linear(512, 512, dtype=self.dtype),
             nn.SiLU(),
-            nn.Linear(512, out_dim),
+            nn.Linear(512, out_dim, dtype=self.dtype),
         )
+
+        # New layer for aggregating across time
+        self.time_aggregation = nn.Linear(256, 256, dtype=self.dtype)
 
         self.initialize_weights()
 
     def initialize_weights(self):
-            for m in self.modules():
-                if isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                    if m.bias is not None:
-                        nn.init.constant_(m.bias, 0)
-                elif isinstance(m, nn.Linear):
-                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.Linear)):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-            
-            # Initialize tracklet embeddings
-            nn.init.normal_(self.tracklet_embeddings, mean=0.0, std=0.02)
-            
-    # @autocast
+        
+        # Initialize tracklet embeddings
+        nn.init.normal_(self.tracklet_embeddings, mean=0.0, std=0.02)
+
     def forward(self, tracklets):
         B, T, N, _ = tracklets.shape
         assert N == self.num_tracklets, f"Expected {self.num_tracklets} players, got {N}"
         
         # visibility mask for null tracklets
-        visibility_mask = (tracklets.sum(dim=-1) != 0).float()  # B, T, N
+        visibility_mask = (tracklets.sum(dim=-1) != 0).to(self.dtype)  # B, T, N
         
         pos_embedding = self.fourier_embedder(tracklets)  # B, T, N, position_dim
         
@@ -427,12 +427,15 @@ class TrackletEmbedder(AbstractEmbModel):
         tracklet_embedding = torch.cat([pos_embedding, tracklet_emb], dim=-1)
         
         # temporal convolution
-        temp_features = self.temporal_conv(pos_embedding.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        temp_features = self.temporal_conv(tracklet_embedding.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
         
         # apply visibility mask
         temp_features = temp_features * visibility_mask.unsqueeze(-1)
         
-        output = self.mlp(temp_features)
+        # reshape for mlp
+        pooled_features = temp_features.mean(dim=1)
         
-        assert output.shape == torch.Size([B, T, N, self.out_dim])
-        return output
+        output = self.mlp(pooled_features)
+        
+        assert output.shape == torch.Size([B, N, self.out_dim])
+        return output.to(self.dtype)

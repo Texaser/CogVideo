@@ -51,6 +51,7 @@ model:
           target: dit_video_concat.Basic3DPositionEmbeddingMixin
           params:
             text_length: 226
+            bbox_length: 10
             height_interpolation: 1.875
             width_interpolation: 1.875
 
@@ -82,6 +83,14 @@ model:
           target: sgm.modules.encoders.modules.PrecomputedT5Embedder
           params:
             max_length: 226
+        - is_trainable: true
+          input_key: bbox
+          target: sgm.modules.encoders.modules.TrackletEmbedder
+          params:
+            out_dim: 4096
+            fourier_freqs: 8
+            num_tracklets: 10
+            use_bf16: false
   first_stage_config:
     target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
     params:

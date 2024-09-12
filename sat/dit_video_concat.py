@@ -163,6 +163,7 @@ class Basic3DPositionEmbeddingMixin(BaseMixin):
         compressed_num_frames,
         hidden_size,
         text_length=0,
+        bbox_length=0,
         height_interpolation=1.0,
         width_interpolation=1.0,
         time_interpolation=1.0,
@@ -170,12 +171,12 @@ class Basic3DPositionEmbeddingMixin(BaseMixin):
         super().__init__()
         self.height = height
         self.width = width
-        self.text_length = text_length
+        self.text_length = text_length + bbox_length
         self.compressed_num_frames = compressed_num_frames
         self.spatial_length = height * width
         self.num_patches = height * width * compressed_num_frames
         self.pos_embedding = nn.Parameter(
-            torch.zeros(1, int(text_length + self.num_patches), int(hidden_size)), requires_grad=False
+            torch.zeros(1, int(self.text_length + self.num_patches), int(hidden_size)), requires_grad=False
         )
         self.height_interpolation = height_interpolation
         self.width_interpolation = width_interpolation

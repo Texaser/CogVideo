@@ -439,13 +439,13 @@ class SFTDataset(Dataset):
             start = int(self.skip_frms_num)
             end = int(start + num_frames / self.fps * actual_fps)
             end_safty = min(int(start + num_frames / self.fps * actual_fps), int(ori_vlen))
-            indices = np.arange(start, end, (end - start) // num_frames).astype(int)
+            indices = np.arange(start, end, max((end - start) // num_frames,1)).astype(int)
             temp_frms = vr.get_batch(np.arange(start, end_safty))
             assert temp_frms is not None
             tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
             tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
             # extract tracklet frames
-            tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())]
+            tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]
         else:
             if ori_vlen > self.max_num_frames:
                 num_frames = self.max_num_frames
@@ -492,7 +492,7 @@ class SFTDataset(Dataset):
         item = {
             "mp4": tensor_frms,
             "txt": self.captions[index],
-            "tracklet": self.tracklets[index],
+            "bbox": tracklet_frms,
             "num_frames": num_frames,
             "fps": self.fps,
         }
@@ -509,7 +509,7 @@ class SFTDataset(Dataset):
             for player_idx, box in enumerate(frame['bounding_box_instances']):
                 if box is not None:  # TODO: handle in data
                     trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
-        
+        # TODO: handle type
         return torch.tensor(trajectory_data, dtype=torch.float16)
 
     def __len__(self):
