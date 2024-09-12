@@ -398,9 +398,6 @@ class TrackletEmbedder(AbstractEmbModel):
             nn.Linear(512, out_dim, dtype=self.dtype),
         )
 
-        # New layer for aggregating across time
-        self.time_aggregation = nn.Linear(256, 256, dtype=self.dtype)
-
         self.initialize_weights()
 
     def initialize_weights(self):
