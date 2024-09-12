@@ -18,7 +18,9 @@ from torchvision.transforms import InterpolationMode
 import decord
 from decord import VideoReader
 from torch.utils.data import Dataset
-
+import json
+import time
+from tqdm import tqdm
 
 def read_video(
     filename: str,
@@ -370,19 +372,58 @@ class SFTDataset(Dataset):
 
         self.video_paths = []
         self.captions = []
+        self.tracklets = []
 
-        for root, dirnames, filenames in os.walk(data_dir):
-            for filename in filenames:
-                if filename.endswith(".mp4"):
-                    video_path = os.path.join(root, filename)
-                    self.video_paths.append(video_path)
+        start_time = time.time()
+        
+        total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
+                        for filename in filenames if filename.endswith(".json"))
 
-                    caption_path = video_path.replace(".mp4", ".txt").replace("videos", "labels")
-                    if os.path.exists(caption_path):
-                        caption = open(caption_path, "r").read().splitlines()[0]
-                    else:
-                        caption = ""
-                    self.captions.append(caption)
+        with tqdm(total=total_files, desc="Loading Data") as pbar:
+            for root, dirnames, filenames in os.walk(data_dir):
+                if len(self.video_paths) >= 10:
+                    break
+                for filename in filenames:
+                    if len(self.video_paths) >= 10:
+                        break
+                    if filename.endswith(".json"):
+                        with open(os.path.join(root, filename), "r") as f:
+                            data = json.load(f)
+                        #TODO: bruh
+                        if len(data["bounding_boxes"]) < 200:
+                            continue
+                        # TODO: fix path in annotations
+                        video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
+                        self.video_paths.append(video_path)
+
+                        caption = data['caption']
+                        self.captions.append(caption)
+
+                        bounding_boxes = data['bounding_boxes']
+                        self.tracklets.append(self.encode_bbox_tracklet(bounding_boxes))
+
+                        pbar.update(1)
+                    
+                       
+
+        end_time = time.time()
+        loading_time = end_time - start_time
+        print(f"\nData loading completed in {loading_time:.2f} seconds.")
+        print(f"Loaded {len(self.video_paths)} video paths, captions, and tracklets.")
+
+
+        # for root, dirnames, filenames in os.walk(data_dir):
+        #         for filename in filenames:
+        #             if filename.endswith(".mp4"):
+        #                 video_path = os.path.join(root, filename)
+        #                 self.video_paths.append(video_path)
+
+        #                 caption_path = video_path.replace(".mp4", ".txt").replace("videos", "labels")
+        #                 if os.path.exists(caption_path):
+        #                     caption = open(caption_path, "r").read().splitlines()[0]
+        #                 else:
+        #                     caption = ""
+        #                 self.captions.append(caption)
 
     def __getitem__(self, index):
         
@@ -403,6 +444,8 @@ class SFTDataset(Dataset):
             assert temp_frms is not None
             tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
             tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
+            # extract tracklet frames
+            tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())]
         else:
             if ori_vlen > self.max_num_frames:
                 num_frames = self.max_num_frames
@@ -415,8 +458,9 @@ class SFTDataset(Dataset):
                     torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
                 )
                 tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
+                # extract tracklet frames
+                #tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())]
             else:
-
                 def nearest_smaller_4k_plus_1(n):
                     remainder = n % 4
                     if remainder == 0:
@@ -435,6 +479,8 @@ class SFTDataset(Dataset):
                 tensor_frms = (
                     torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
                 )
+                # extract tracklet frames
+                #tracklet_frms = self.tracklets[index][torch.tensor(np.arange(start, end))]
 
         tensor_frms = pad_last_frame(
             tensor_frms, self.max_num_frames
@@ -446,10 +492,25 @@ class SFTDataset(Dataset):
         item = {
             "mp4": tensor_frms,
             "txt": self.captions[index],
+            "tracklet": self.tracklets[index],
             "num_frames": num_frames,
             "fps": self.fps,
         }
         return item
+
+    def encode_bbox_tracklet(self, bounding_boxes):
+        num_frames = len(bounding_boxes)
+        num_players = 10
+        
+        trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
+        
+        for frame_idx, frame in enumerate(bounding_boxes):
+            assert len(frame['bounding_box_instances']) == num_players
+            for player_idx, box in enumerate(frame['bounding_box_instances']):
+                if box is not None:  # TODO: handle in data
+                    trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
+        
+        return torch.tensor(trajectory_data, dtype=torch.float16)
 
     def __len__(self):
         return len(self.video_paths)

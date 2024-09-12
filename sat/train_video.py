@@ -219,7 +219,6 @@ if __name__ == "__main__":
             base_config = yaml.safe_load(f)
         configs.append(base_config)
     args.log_config = configs
-
     training_main(
         args,
         model_cls=SATVideoDiffusionEngine,

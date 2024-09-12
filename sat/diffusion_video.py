@@ -24,7 +24,6 @@ from sat import mpu
 class SATVideoDiffusionEngine(nn.Module):
     def __init__(self, args, **kwargs):
         super().__init__()
-
         model_config = args.model_config
         # model args preprocess
         log_keys = model_config.get("log_keys", None)

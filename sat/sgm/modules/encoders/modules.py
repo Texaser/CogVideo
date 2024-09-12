@@ -350,3 +350,89 @@ class PrecomputedT5Embedder(AbstractEmbModel):
 
     def encode(self, text):
         return self(text)
+
+class FourierEmbedder():
+    def __init__(self, num_freqs=64, temperature=100):
+
+        self.num_freqs = num_freqs
+        self.temperature = temperature
+        self.freq_bands = temperature ** ( torch.arange(num_freqs) / num_freqs )  
+
+    @ torch.no_grad()
+    def __call__(self, x, cat_dim=-1):
+        "x: arbitrary shape of tensor. dim: cat dim"
+        out = []
+        for freq in self.freq_bands:
+            out.append( torch.sin( freq*x ) )
+            out.append( torch.cos( freq*x ) )
+        return torch.cat(out, cat_dim)
+
+
+class TrackletEmbedder(AbstractEmbModel):
+    """Simple encoder for bounding box tracklets."""
+
+    def __init__(
+        self,
+        out_dim,
+        fourier_freqs=8,
+        num_tracklets=10,
+        device="cuda",
+    ):
+        super().__init__()
+        self.device = device
+        self.out_dim = out_dim 
+        self.num_tracklets = num_tracklets
+
+        self.fourier_embedder = FourierEmbedder(num_freqs=fourier_freqs)
+        self.position_dim = fourier_freqs*2*4 # 2 is sin&cos, 4 is xyxy 
+
+        self.temporal_conv = nn.Conv2d(self.position_dim + 64, 256, kernel_size=(3,1), padding=(1,0))
+
+        self.tracklet_embeddings = nn.Parameter(torch.randn(num_tracklets, 64)) # fourier_freqs*2*4
+        self.mlp = nn.Sequential(
+            nn.Linear( 256, 512), # fourier_freqs*2*4
+            nn.SiLU(),
+            nn.Linear( 512, 512),
+            nn.SiLU(),
+            nn.Linear(512, out_dim),
+        )
+
+        self.initialize_weights()
+
+    def initialize_weights(self):
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.Linear):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    nn.init.constant_(m.bias, 0)
+            
+            # Initialize tracklet embeddings
+            nn.init.normal_(self.tracklet_embeddings, mean=0.0, std=0.02)
+            
+    # @autocast
+    def forward(self, tracklets):
+        B, T, N, _ = tracklets.shape
+        assert N == self.num_tracklets, f"Expected {self.num_tracklets} players, got {N}"
+        
+        # visibility mask for null tracklets
+        visibility_mask = (tracklets.sum(dim=-1) != 0).float()  # B, T, N
+        
+        pos_embedding = self.fourier_embedder(tracklets)  # B, T, N, position_dim
+        
+        # tracklet-specific embeddings
+        tracklet_emb = self.tracklet_embeddings.unsqueeze(0).unsqueeze(0).expand(B, T, -1, -1)
+        tracklet_embedding = torch.cat([pos_embedding, tracklet_emb], dim=-1)
+        
+        # temporal convolution
+        temp_features = self.temporal_conv(pos_embedding.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        
+        # apply visibility mask
+        temp_features = temp_features * visibility_mask.unsqueeze(-1)
+        
+        output = self.mlp(temp_features)
+        
+        assert output.shape == torch.Size([B, T, N, self.out_dim])
+        return output
