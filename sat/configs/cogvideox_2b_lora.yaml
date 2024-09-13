@@ -51,7 +51,7 @@ model:
           target: dit_video_concat.Basic3DPositionEmbeddingMixin
           params:
             text_length: 226
-            bbox_length: 49
+            bbox_length: 10
             height_interpolation: 1.875
             width_interpolation: 1.875
 

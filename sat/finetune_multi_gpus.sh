@@ -10,7 +10,7 @@ export PATH="$CONDA_ENV_PATH/bin:$PATH"
 PYTHON_PATH="$CONDA_ENV_PATH/bin/python"
 
 # Set up the run command using the specified Python interpreter
-run_cmd="CUDA_VISIBLE_DEVICES=2,3 $PYTHON_PATH -m torch.distributed.run --standalone --nproc_per_node=2 train_video.py --base configs/cogvideox_2b_lora.yaml configs/sft.yaml --seed $RANDOM"
+run_cmd="CUDA_VISIBLE_DEVICES=5,6,7 $PYTHON_PATH -m torch.distributed.run --standalone --nproc_per_node=3 train_video.py --base configs/cogvideox_2b_lora.yaml configs/sft.yaml --seed $RANDOM"
 
 echo ${run_cmd}
 eval ${run_cmd}
