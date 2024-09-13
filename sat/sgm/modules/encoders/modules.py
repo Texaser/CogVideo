@@ -429,7 +429,7 @@ class TrackletEmbedder(AbstractEmbModel):
         # apply visibility mask
         temp_features = temp_features * visibility_mask.unsqueeze(-1)
         
-        pooled_features = temp_features.mean(dim=1)
+        pooled_features = temp_features.mean(dim=2)
         
         output = self.mlp(pooled_features)
         

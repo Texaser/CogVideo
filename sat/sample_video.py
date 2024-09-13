@@ -150,12 +150,7 @@ def sampling_main(args, model_cls):
                     trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
         # TODO: handle type
         return torch.tensor(trajectory_data, dtype=torch.float16)
-    with open('/mnt/mir/fan23j/data/hq-basketball-dataset/filtered-clips-aggressive-thresh-annotations/1038305_85_adelaide_36ers_89_new_zealand_breakers/period_1/329956794_2-_68.832_0.json', "r") as f:
-        data =  json.load(f)
-    
-    indices = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57, 60, 63, 66, 69, 72, 75, 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108, 111, 114, 117, 120, 123, 126, 129, 132, 135, 138, 141, 144]
-    
-    bbox = encode_bbox_tracklet(data['bounding_boxes'])[indices].unsqueeze(0).to("cuda")
+
     bbox = torch.load('/mnt/mir/fan23j/CogVideo/sat/inference_trajs/straight_line_left_to_right.pth').to("cuda")
     with torch.no_grad():
         for text, cnt in tqdm(data_iter):
@@ -167,7 +162,7 @@ def sampling_main(args, model_cls):
                 "prompt": text,
                 "negative_prompt": "",
                 "num_frames": torch.tensor(T).unsqueeze(0),
-                "bbox": bbox,
+                "bbox": bbox.unsqueeze(0),
             }
 
             batch, batch_uc = get_batch(

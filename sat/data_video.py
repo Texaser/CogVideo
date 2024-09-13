@@ -385,9 +385,6 @@ class SFTDataset(Dataset):
                     if filename.endswith(".json"):
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
-                        #TODO: bruh
-                        if len(data["bounding_boxes"]) < 200:
-                            continue
                         # TODO: fix path in annotations
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)
@@ -399,8 +396,6 @@ class SFTDataset(Dataset):
                         self.tracklets.append(self.encode_bbox_tracklet(bounding_boxes))
 
                         pbar.update(1)
-                    
-                       
 
         end_time = time.time()
         loading_time = end_time - start_time
@@ -429,7 +424,7 @@ class SFTDataset(Dataset):
         vr = VideoReader(uri=video_path, height=-1, width=-1)
         actual_fps = vr.get_avg_fps()
         ori_vlen = len(vr)
-
+        
         if ori_vlen / actual_fps * self.fps > self.max_num_frames:
             num_frames = self.max_num_frames
             start = int(self.skip_frms_num)
@@ -454,8 +449,6 @@ class SFTDataset(Dataset):
                     torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
                 )
                 tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-                # extract tracklet frames
-                #tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())]
             else:
                 def nearest_smaller_4k_plus_1(n):
                     remainder = n % 4
