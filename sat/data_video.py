@@ -18,7 +18,9 @@ from torchvision.transforms import InterpolationMode
 import decord
 from decord import VideoReader
 from torch.utils.data import Dataset
-
+import json
+import time
+from tqdm import tqdm
 
 def read_video(
     filename: str,
@@ -371,18 +373,59 @@ class SFTDataset(Dataset):
         self.video_paths = []
         self.captions = []
 
-        for root, dirnames, filenames in os.walk(data_dir):
-            for filename in filenames:
-                if filename.endswith(".mp4"):
-                    video_path = os.path.join(root, filename)
-                    self.video_paths.append(video_path)
+        # for root, dirnames, filenames in os.walk(data_dir):
+        #     for filename in filenames:
+        #         if filename.endswith(".mp4"):
+        #             video_path = os.path.join(root, filename)
+        #             self.video_paths.append(video_path)
 
-                    caption_path = video_path.replace(".mp4", ".txt").replace("videos", "labels")
-                    if os.path.exists(caption_path):
-                        caption = open(caption_path, "r").read().splitlines()[0]
-                    else:
-                        caption = ""
-                    self.captions.append(caption)
+        #             caption_path = video_path.replace(".mp4", ".txt").replace("videos", "labels")
+        #             if os.path.exists(caption_path):
+        #                 caption = open(caption_path, "r").read().splitlines()[0]
+        #             else:
+        #                 caption = ""
+        #             self.captions.append(caption)
+        
+        start_time = time.time()
+
+        total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
+                        for filename in filenames if filename.endswith(".json"))
+
+        with tqdm(total=total_files, desc="Loading Data") as pbar:
+            for root, dirnames, filenames in os.walk(data_dir):
+                for filename in filenames:
+                    if filename.endswith(".json"):
+                        with open(os.path.join(root, filename), "r") as f:
+                            data = json.load(f)
+                        #TODO: bruh
+
+                        # if len(data["bounding_boxes"]) < 200:
+                        #     continue
+
+
+                        # TODO: fix path in annotations
+
+                        caption = data['caption']
+                        
+                        if caption == "A basketball player performs an action":
+                            continue
+                        
+                        video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
+                        self.video_paths.append(video_path)
+
+                        self.captions.append(caption)
+
+                        # bounding_boxes = data['bounding_boxes']
+                        # self.tracklets.append(self.encode_bbox_tracklet(bounding_boxes))
+
+                        pbar.update(1)
+
+
+
+        end_time = time.time()
+        loading_time = end_time - start_time
+        print(f"\nData loading completed in {loading_time:.2f} seconds.")
+        print(f"Loaded {len(self.video_paths)} video paths, captions, and tracklets.")
 
     def __getitem__(self, index):
         
@@ -398,7 +441,8 @@ class SFTDataset(Dataset):
             start = int(self.skip_frms_num)
             end = int(start + num_frames / self.fps * actual_fps)
             end_safty = min(int(start + num_frames / self.fps * actual_fps), int(ori_vlen))
-            indices = np.arange(start, end, (end - start) // num_frames).astype(int)
+            # indices = np.arange(start, end, (end - start) // num_frames).astype(int)
+            indices = np.arange(start, end, max((end - start) // num_frames,1)).astype(int)
             temp_frms = vr.get_batch(np.arange(start, end_safty))
             assert temp_frms is not None
             tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
@@ -408,7 +452,9 @@ class SFTDataset(Dataset):
                 num_frames = self.max_num_frames
                 start = int(self.skip_frms_num)
                 end = int(ori_vlen - self.skip_frms_num)
-                indices = np.arange(start, end, (end - start) // num_frames).astype(int)
+                # if num_frames == 0:
+                #     print(video_path)
+                indices = np.arange(start, end, max((end - start) // num_frames,1)).astype(int)
                 temp_frms = vr.get_batch(np.arange(start, end))
                 assert temp_frms is not None
                 tensor_frms = (
