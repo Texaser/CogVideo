@@ -382,9 +382,12 @@ class SFTDataset(Dataset):
         with tqdm(total=total_files, desc="Loading Data") as pbar:
             for root, dirnames, filenames in os.walk(data_dir):
                 for filename in filenames:
+
                     if filename.endswith(".json"):
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
+                        if data['caption'] == 'A basketball player performs an action':
+                            continue
                         # TODO: fix path in annotations
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)

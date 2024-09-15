@@ -1,11 +1,11 @@
 args:
   checkpoint_activations: True ## using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 2b-lora-sanity
+  experiment_name: 2b-full-traj
   mode: finetune
   load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-2b-sat/transformer"
   no_load_rng: True
-  train_iters: 1000 # Suggest more than 1000 For Lora and SFT For 500 is enough
+  train_iters: 10000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
   eval_interval: 100
   eval_batch_size: 1
@@ -17,7 +17,7 @@ args:
   split: 1,0,0
   num_workers: 8
   force_train: True
-  only_log_video_latents: True
+  only_log_video_latents: False
   wandb: True
   wandb_project_name: "STDiT-Motion"
   wandb_project_entity: "Video-Generation-For-Structured-Behavior-Modeling"
@@ -58,7 +58,7 @@ deepspeed:
   optimizer:
     type: sat.ops.FusedEmaAdam
     params:
-      lr: 0.001 # Between 1E-3 and 5E-4 For Lora and 1E-5 For SFT
+      lr: 0.00001 # Between 1E-3 and 5E-4 For Lora and 1E-5 For SFT
       betas: [ 0.9, 0.95 ]
       eps: 1e-8
       weight_decay: 1e-4

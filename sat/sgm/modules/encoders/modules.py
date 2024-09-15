@@ -429,9 +429,9 @@ class TrackletEmbedder(AbstractEmbModel):
         # apply visibility mask
         temp_features = temp_features * visibility_mask.unsqueeze(-1)
         
-        pooled_features = temp_features.mean(dim=2)
+        pooled_features = temp_features.mean(dim=1)
         
         output = self.mlp(pooled_features)
-        
-        assert output.shape == torch.Size([B, T, self.out_dim])
+
+        assert output.shape == torch.Size([B, N, self.out_dim])
         return output.to(self.dtype)
