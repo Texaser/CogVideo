@@ -765,7 +765,6 @@ class DiffusionTransformer(BaseModel):
         kwargs["emb"] = emb
         kwargs["encoder_outputs"] = context
         kwargs["text_length"] = context.shape[1]
-
         kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
         output = super().forward(**kwargs)[0]
 

@@ -27,6 +27,7 @@ class SATVideoDiffusionEngine(nn.Module):
         super().__init__()
 
         model_config = args.model_config
+        
         # model args preprocess
         log_keys = model_config.get("log_keys", None)
         input_key = model_config.get("input_key", "mp4")
@@ -259,6 +260,7 @@ class SATVideoDiffusionEngine(nn.Module):
         Defines heuristics to log different conditionings.
         These can be lists of strings (text-to-image), tensors, ints, ...
         """
+        
         image_h, image_w = batch[self.input_key].shape[3:]
         log = dict()
 
@@ -306,14 +308,12 @@ class SATVideoDiffusionEngine(nn.Module):
         log = dict()
 
         x = self.get_input(batch)
-
         c, uc = self.conditioner.get_unconditional_conditioning(
             batch,
             force_uc_zero_embeddings=ucg_keys if len(self.conditioner.embedders) > 0 else [],
         )
 
         sampling_kwargs = {}
-
         N = min(x.shape[0], N)
         x = x.to(self.device)[:N]
         if not self.latent_input:
@@ -321,6 +321,7 @@ class SATVideoDiffusionEngine(nn.Module):
         x = x.permute(0, 2, 1, 3, 4).contiguous()
         z = self.encode_first_stage(x, batch)
         if not only_log_video_latents:
+            # TODO: we run out of mem here during eval
             log["reconstructions"] = self.decode_first_stage(z).to(torch.float32)
             log["reconstructions"] = log["reconstructions"].permute(0, 2, 1, 3, 4).contiguous()
         z = z.permute(0, 2, 1, 3, 4).contiguous()
@@ -340,4 +341,5 @@ class SATVideoDiffusionEngine(nn.Module):
             samples = self.decode_first_stage(samples).to(torch.float32)
             samples = samples.permute(0, 2, 1, 3, 4).contiguous()
             log["samples"] = samples
+        
         return log

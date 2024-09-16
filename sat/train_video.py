@@ -6,6 +6,7 @@ import torch.distributed
 import imageio
 import wandb
 import warnings
+import yaml
 
 from omegaconf import OmegaConf
 from functools import partial
@@ -67,12 +68,13 @@ def log_video(batch, model, args, only_log_video_latents=False):
     """
     Video logging func.
     """
+    
     # print(batch)
     texts = batch["txt"]
     text_save_dir = os.path.join(args.save, "video_texts")
     os.makedirs(text_save_dir, exist_ok=True)
     save_texts(texts, text_save_dir, args.iteration)
-
+    
     gpu_autocast_kwargs = {
         "enabled": torch.is_autocast_enabled(),
         "dtype": torch.get_autocast_gpu_dtype(),
@@ -114,7 +116,6 @@ def log_video(batch, model, args, only_log_video_latents=False):
                 for k in videos:
                     samples = (videos[k] + 1.0) / 2.0
                     filename = "{}_gs-{:06}".format(k, args.iteration)
-
                     path = os.path.join(root, filename)
                     os.makedirs(os.path.split(path)[0], exist_ok=True)
                     save_video_as_grid_and_mp4(
@@ -262,12 +263,14 @@ def forward_step(data_iterator, model, args, timers, data_class=None):
 
 if __name__ == "__main__":
     
+    breakpoint()
+    
     # set some global vars for distributed training
     if "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ:
         os.environ["LOCAL_RANK"] = os.environ["OMPI_COMM_WORLD_LOCAL_RANK"]
         os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
         os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
-
+    
     # parse args
     py_parser = argparse.ArgumentParser(add_help=False)
     known, args_list = py_parser.parse_known_args()
@@ -276,13 +279,12 @@ if __name__ == "__main__":
 
     # get data class object
     # todo: what type of obj is this?
-    breakpoint()
-    data_class: SFTDataset = get_obj_from_str(args.data_config["target"])
+    # SFTDataset
+    data_class = get_obj_from_str(args.data_config["target"])
     create_dataset_function = partial(
         data_class.create_dataset_function, **args.data_config["params"]
     )
 
-    import yaml
     configs = []
     for config in args.base:
         with open(config, "r") as f:

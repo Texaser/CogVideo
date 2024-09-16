@@ -3,21 +3,17 @@ args:
   model_parallel_size: 1
   experiment_name: 2b_lora_1000
   mode: finetune
-  load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-2b-sat/transformer" # path to the model DiT weights?
+  load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-5b-sat/transformer"
   no_load_rng: True
-  train_iters: 5000 # Suggest more than 1000 For Lora and SFT For 500 is enough
+  train_iters: 1000000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
   eval_interval: 200
   eval_batch_size: 1
-  save: ckpts_2b_lora
+  save: ckpts_5b_lora
   save_interval: 500
   log_interval: 20
-  
-  # training data is just a list of videos at the moment?
   train_data: [ "/mnt/bum/hanyi/repo/CogVideo/hqdata_subset_1000" ] # Train data path
   valid_data: [ "/mnt/bum/hanyi/repo/CogVideo/hqdata_subset_1000" ] # Validation data path, can be the same as train_data(not recommended)
-  # train / val / test
-  # q: how are actually doing eval?
   split: 1,0,0
   num_workers: 8
   force_train: True
@@ -29,9 +25,9 @@ data:
   target: data_video.SFTDataset
   params:
     video_size: [ 480, 720 ]
-    fps: 8
+    fps: 30 # 8 -> 30
     max_num_frames: 49
-    skip_frms_num: 3.
+    skip_frms_num: 1. # 3. -> 1
 
 deepspeed:
   # Minimun for 16 videos per batch for ALL GPUs, This setting is for 8 x A100 GPUs
@@ -39,31 +35,24 @@ deepspeed:
   gradient_accumulation_steps: 1
   steps_per_print: 50
   gradient_clipping: 0.1
-  
-  # https://arxiv.org/pdf/1910.02054v3 
   zero_optimization:
     stage: 2
     cpu_offload: false
     contiguous_gradients: false
     overlap_comm: true
     reduce_scatter: true
-
-    # ???
     reduce_bucket_size: 1000000000
     allgather_bucket_size: 1000000000
-    
     load_from_fp32_weights: false
   zero_allow_untested_optimizer: true
   ######
   bf16:
-      enabled: False  # For CogVideoX-2B Turn to False and For CogVideoX-5B Turn to True
+      enabled: True  # For CogVideoX-2B Turn to False and For CogVideoX-5B Turn to True
   fp16:
-      enabled: True  # For CogVideoX-2B Turn to True and For CogVideoX-5B Turn to False
+      enabled: False  # For CogVideoX-2B Turn to True and For CogVideoX-5B Turn to False
   ######    
   loss_scale: 0
   loss_scale_window: 400
-
-  # some fancy loss?
   hysteresis: 2
   min_loss_scale: 1
 
@@ -74,9 +63,7 @@ deepspeed:
       betas: [ 0.9, 0.95 ]
       eps: 1e-8
       weight_decay: 1e-4
-
   activation_checkpointing:
     partition_activations: false
     contiguous_memory_optimization: false
-
   wall_clock_breakdown: false

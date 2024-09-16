@@ -101,7 +101,8 @@ def get_args(args_list=None, parser=None):
 
     # world size: # gpus
     if args.rank == 0:
-        print_rank0("using world size: {}".format(args.world_size))
+        # print_rank0("using world size: {}".format(args.world_size))
+        pass
 
     if args.train_data_weights is not None:
         assert len(args.train_data_weights) == len(args.train_data)
@@ -150,7 +151,8 @@ def get_args(args_list=None, parser=None):
             optimizer_params_config["weight_decay"] = args.weight_decay
         else:  # override args with values in deepspeed_config
             if args.rank == 0:
-                print_rank0("Will override arguments with manually specified deepspeed_config!")
+                # print_rank0("Will override arguments with manually specified deepspeed_config!")
+                pass
             if "fp16" in deepspeed_config and deepspeed_config["fp16"]["enabled"]:
                 args.fp16 = True
             else:
@@ -249,7 +251,6 @@ def initialize_distributed(args):
             _CUDA_RNG_STATE_TRACKER.add(_MODEL_PARALLEL_RNG_TRACKER_NAME, 1)  # default seed 1
         except Exception as e:
             from sat.helpers import print_rank0
-
             print_rank0(str(e), level="DEBUG")
 
     return True
