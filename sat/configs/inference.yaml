@@ -1,7 +1,7 @@
 args:
   latent_channels: 16
   mode: inference
-  load: "/mnt/mir/fan23j/CogVideo/sat/ckpts_2b_lora/2b-full-traj-09-14-15-34" # This is for Full model without lora adapter
+  load: "/mnt/bum/hanyi/repo/CogVideo/sat/ckpts_2b_lora/2b-lora-traj-09-12-17-14" # This is for Full model without lora adapter
   # load: "{your lora folder} such as zRzRzRzRzRzRzR/lora-disney-08-20-13-28" # This is for Full model without lora adapter
 
   batch_size: 1

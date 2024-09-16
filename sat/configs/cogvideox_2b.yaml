@@ -50,7 +50,7 @@ model:
           target: dit_video_concat.Basic3DPositionEmbeddingMixin
           params:
             text_length: 226
-            bbox_length: 10
+            bbox_length: 226
             height_interpolation: 1.875
             width_interpolation: 1.875
 
@@ -70,14 +70,6 @@ model:
   conditioner_config:
     target: sgm.modules.GeneralConditioner
     params:
-      # emb_models:
-      #   - is_trainable: false
-      #     input_key: txt
-      #     ucg_rate: 0.1
-      #     target: sgm.modules.encoders.modules.FrozenT5Embedder
-      #     params:
-      #       model_dir: "/mnt/bum/hanyi/repo/CogVideo/sat/t5-v1_1-xxl"
-      #       max_length: 226
       emb_models:
         - is_trainable: false
           input_key: txt
@@ -92,6 +84,7 @@ model:
             out_dim: 4096
             fourier_freqs: 8
             num_tracklets: 10
+            token_length: 226
             use_bf16: false
 
   first_stage_config:

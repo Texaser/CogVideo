@@ -151,10 +151,10 @@ def sampling_main(args, model_cls):
         # TODO: handle type
         return torch.tensor(trajectory_data, dtype=torch.float16)
     # TODO: @Texaser test indices for 49 frames (same as training), and to match inference settings (13 frames?)
-    indices = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57]
+    # indices = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57]
     with open('/mnt/mir/fan23j/data/hq-basketball-dataset/filtered-clips-annotations/1038305_85_adelaide_36ers_89_new_zealand_breakers/period_1/329956791_rebound_44.265_0.json', 'r') as f:
         data = json.load(f)
-        bbox = encode_bbox_tracklet(data['bounding_boxes'])[indices].to("cuda").to(torch.float16)
+        bbox = encode_bbox_tracklet(data['bounding_boxes']).to("cuda").to(torch.float16)
     #bbox = torch.load('/mnt/mir/fan23j/CogVideo/sat/inference_trajs/standing_still.pth').to("cuda").to(torch.float16)
     with torch.no_grad():
         for text, cnt in tqdm(data_iter):

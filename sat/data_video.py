@@ -382,13 +382,11 @@ class SFTDataset(Dataset):
         with tqdm(total=total_files, desc="Loading Data") as pbar:
             for root, dirnames, filenames in os.walk(data_dir):
                 for filename in filenames:
-
+                    if len(self.video_paths) >= 10:
+                        break
                     if filename.endswith(".json"):
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
-                        if data['caption'] == 'A basketball player performs an action':
-                            continue
-                        # TODO: fix path in annotations
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)
 
@@ -438,8 +436,6 @@ class SFTDataset(Dataset):
             assert temp_frms is not None
             tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
             tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-            # extract tracklet frames
-            tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]
         else:
             if ori_vlen > self.max_num_frames:
                 num_frames = self.max_num_frames
@@ -474,6 +470,8 @@ class SFTDataset(Dataset):
                 # extract tracklet frames
                 #tracklet_frms = self.tracklets[index][torch.tensor(np.arange(start, end))]
 
+        # extract tracklet frames
+        tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())[:num_frames]]
         tensor_frms = pad_last_frame(
             tensor_frms, self.max_num_frames
         )  # the len of indices may be less than num_frames, due to round error

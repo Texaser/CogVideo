@@ -375,6 +375,7 @@ class TrackletEmbedder(AbstractEmbModel):
         out_dim,
         fourier_freqs=8,
         num_tracklets=10,
+        token_length=226,
         use_bf16=False,
         device="cuda",
     ):
@@ -382,6 +383,7 @@ class TrackletEmbedder(AbstractEmbModel):
         self.device = device
         self.out_dim = out_dim 
         self.num_tracklets = num_tracklets
+        self.token_length = token_length
         self.dtype = torch.bfloat16 if use_bf16 else torch.float16
 
         self.fourier_embedder = FourierEmbedder(num_freqs=fourier_freqs)
@@ -397,6 +399,9 @@ class TrackletEmbedder(AbstractEmbModel):
             nn.SiLU(),
             nn.Linear(512, out_dim, dtype=self.dtype),
         )
+
+        # New linear layer to project to token_length
+        self.project_to_tokens = nn.Linear(self.num_tracklets, self.token_length, dtype=self.dtype)
 
         self.initialize_weights()
 
@@ -429,9 +434,11 @@ class TrackletEmbedder(AbstractEmbModel):
         # apply visibility mask
         temp_features = temp_features * visibility_mask.unsqueeze(-1)
         
-        pooled_features = temp_features.mean(dim=1)
+        pooled_features = temp_features.mean(dim=1)  # Average over time dimension
         
-        output = self.mlp(pooled_features)
+        output = self.mlp(pooled_features)  # B, N, out_dim
 
-        assert output.shape == torch.Size([B, N, self.out_dim])
-        return output.to(self.dtype)
+        # Project from num_tracklets to token_length
+        output = self.project_to_tokens(output.transpose(1, 2)).transpose(1, 2)  # B, token_length, out_dim
+
+        return output.to(self.dtype) 
