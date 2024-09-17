@@ -1,1 +1,10 @@
 A basketball player missing a three-point shot
+A basketball player assisting on a play
+A basketball player setting a screen
+A basketball player grabbing a rebound
+A basketball player committing a turnover
+A basketball player making a free throw
+A basketball player missing a free throw
+A basketball player scoring and being fouled
+A basketball player missing a two-point shot
+A basketball player making a two-point shot
