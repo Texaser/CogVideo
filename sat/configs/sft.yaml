@@ -12,13 +12,13 @@ args:
   save: ckpts_5b_lora
   save_interval: 1000
   log_interval: 20
-  train_data: [ "/mnt/mir/fan23j/data/hq-standard" ] # Train data path
-  valid_data: [ "/mnt/mir/fan23j/data/hq-standard" ] # Validation data path, can be the same as train_data(not recommended)
+  train_data: [ "/mnt/bum/hanyi/repo/CogVideo/filtered-clips-annotations-200-frames/1038305_85_adelaide_36ers_89_new_zealand_breakers" ] # Train data path
+  valid_data: [ "/mnt/bum/hanyi/repo/CogVideo/filtered-clips-annotations-200-frames/1038305_85_adelaide_36ers_89_new_zealand_breakers" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
   num_workers: 8
   force_train: True
   only_log_video_latents: False
-  wandb: True
+  wandb: False
   wandb_project_name: "CogVideoX"
   # wandb_project_entity: "Video-Generation-For-Structured-Behavior-Modeling"
 

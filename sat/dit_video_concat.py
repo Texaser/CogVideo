@@ -361,7 +361,8 @@ class FinalLayerMixin(BaseMixin):
         self.latent_height = latent_height
 
     def final_forward(self, logits, **kwargs):
-        x, emb = logits[:, kwargs["text_length"] :, :], kwargs["emb"]  # x:(b,(t n),d)
+        # x, emb = logits[:, kwargs["text_length"] :, :], kwargs["emb"]  # x:(b,(t n),d)
+        x, emb = logits[:, :, :], kwargs["emb"]  # x:(b,(t n),d)
 
         shift, scale = self.adaLN_modulation(emb).chunk(2, dim=1)
         x = modulate(self.norm_final(x), shift, scale)
@@ -454,10 +455,10 @@ class AdaLNMixin(BaseMixin):
         *args,
         **kwargs,
     ):
-        text_length = kwargs["text_length"]
+        # text_length = kwargs["text_length"]
         # hidden_states (b,(n_t+t*n_i),d)
-        text_hidden_states = hidden_states[:, :text_length]  # (b,n,d)
-        img_hidden_states = hidden_states[:, text_length:]  # (b,(t n),d)
+        # text_hidden_states = hidden_states[:, :text_length]  # (b,n,d)
+        img_hidden_states = hidden_states  # (b,(t n),d)
         layer = self.transformer.layers[kwargs["layer_id"]]
         adaLN_modulation = self.adaLN_modulations[kwargs["layer_id"]]
 
@@ -484,38 +485,42 @@ class AdaLNMixin(BaseMixin):
 
         # self full attention (b,(t n),d)
         img_attention_input = layer.input_layernorm(img_hidden_states)
-        text_attention_input = layer.input_layernorm(text_hidden_states)
+        # text_attention_input = layer.input_layernorm(text_hidden_states)
         img_attention_input = modulate(img_attention_input, shift_msa, scale_msa)
-        text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_msa)
+        # text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_msa)
 
-        attention_input = torch.cat((text_attention_input, img_attention_input), dim=1)  # (b,n_t+t*n_i,d)
+        # attention_input = torch.cat((text_attention_input, img_attention_input), dim=1)  # (b,n_t+t*n_i,d)
+        attention_input = img_attention_input
         attention_output = layer.attention(attention_input, mask, **kwargs)
-        text_attention_output = attention_output[:, :text_length]  # (b,n,d)
-        img_attention_output = attention_output[:, text_length:]  # (b,(t n),d)
+        # text_attention_output = attention_output[:, :text_length]  # (b,n,d)
+        img_attention_output = attention_output  # (b,(t n),d)
 
         if self.transformer.layernorm_order == "sandwich":
-            text_attention_output = layer.third_layernorm(text_attention_output)
+            # text_attention_output = layer.third_layernorm(text_attention_output)
             img_attention_output = layer.third_layernorm(img_attention_output)
         img_hidden_states = img_hidden_states + gate_msa * img_attention_output  # (b,(t n),d)
-        text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output  # (b,n,d)
+        # text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output  # (b,n,d)
 
         # mlp (b,(t n),d)
         img_mlp_input = layer.post_attention_layernorm(img_hidden_states)  # vision (b,(t n),d)
-        text_mlp_input = layer.post_attention_layernorm(text_hidden_states)  # language (b,n,d)
+        # text_mlp_input = layer.post_attention_layernorm(text_hidden_states)  # language (b,n,d)
         img_mlp_input = modulate(img_mlp_input, shift_mlp, scale_mlp)
-        text_mlp_input = modulate(text_mlp_input, text_shift_mlp, text_scale_mlp)
-        mlp_input = torch.cat((text_mlp_input, img_mlp_input), dim=1)  # (b,(n_t+t*n_i),d
+        # text_mlp_input = modulate(text_mlp_input, text_shift_mlp, text_scale_mlp)
+        # mlp_input = torch.cat((text_mlp_input, img_mlp_input), dim=1)  # (b,(n_t+t*n_i),d
+        mlp_input = img_mlp_input  # (b,(n_t+t*n_i),d
         mlp_output = layer.mlp(mlp_input, **kwargs)
-        img_mlp_output = mlp_output[:, text_length:]  # vision (b,(t n),d)
-        text_mlp_output = mlp_output[:, :text_length]  # language (b,n,d)
+        img_mlp_output = mlp_output
+        # img_mlp_output = mlp_output[:, text_length:]  # vision (b,(t n),d)
+        # text_mlp_output = mlp_output[:, :text_length]  # language (b,n,d)
         if self.transformer.layernorm_order == "sandwich":
-            text_mlp_output = layer.fourth_layernorm(text_mlp_output)
+            # text_mlp_output = layer.fourth_layernorm(text_mlp_output)
             img_mlp_output = layer.fourth_layernorm(img_mlp_output)
 
         img_hidden_states = img_hidden_states + gate_mlp * img_mlp_output  # vision (b,(t n),d)
-        text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output  # language (b,n,d)
+        # text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output  # language (b,n,d)
 
-        hidden_states = torch.cat((text_hidden_states, img_hidden_states), dim=1)  # (b,(n_t+t*n_i),d)
+        # hidden_states = torch.cat((text_hidden_states, img_hidden_states), dim=1)  # (b,(n_t+t*n_i),d)
+        hidden_states = img_hidden_states
         return hidden_states
 
     def reinit(self, parent_model=None):
@@ -763,8 +768,8 @@ class DiffusionTransformer(BaseModel):
         kwargs["seq_length"] = t * h * w // (self.patch_size**2)
         kwargs["images"] = x
         kwargs["emb"] = emb
-        kwargs["encoder_outputs"] = context
-        kwargs["text_length"] = context.shape[1]
+        # kwargs["encoder_outputs"] = context
+        # kwargs["text_length"] = context.shape[1]
 
         kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
         output = super().forward(**kwargs)[0]

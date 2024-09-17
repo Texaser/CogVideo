@@ -51,7 +51,7 @@ model:
           target: dit_video_concat.Rotary3DPositionEmbeddingMixin # different from cogvideox_2b_infer.yaml
           params:
             hidden_size_head: 64
-            text_length: 226
+            text_length: 
 
         lora_config: ## Using Lora
           target: sat.model.finetune.lora2.LoraMixin
@@ -61,7 +61,7 @@ model:
         patch_embed_config:
           target: dit_video_concat.ImagePatchEmbeddingMixin
           params:
-            text_hidden_size: 4096
+            text_hidden_size: 
 
         adaln_layer_config:
           target: dit_video_concat.AdaLNMixin
@@ -71,9 +71,9 @@ model:
         final_layer_config:
           target: dit_video_concat.FinalLayerMixin
 
-  conditioner_config:
-    target: sgm.modules.GeneralConditioner
-    params:
+  # conditioner_config:
+  #   target: sgm.modules.GeneralConditioner
+  #   params:
       # emb_models:
       #   - is_trainable: false
       #     input_key: txt
