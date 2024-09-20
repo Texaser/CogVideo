@@ -373,7 +373,7 @@ class SFTDataset(Dataset):
         self.video_paths = []
         self.captions = []
 
-                start_time = time.time()
+        start_time = time.time()
         
         total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
                         for filename in filenames if filename.endswith(".json"))
@@ -382,6 +382,8 @@ class SFTDataset(Dataset):
             for root, dirnames, filenames in os.walk(data_dir):
                 for filename in filenames:
                     if filename.endswith(".json"):
+                        if len(self.video_paths) >= 10:
+                            break
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
                         # TODO: fix path in annotations

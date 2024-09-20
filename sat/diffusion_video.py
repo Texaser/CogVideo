@@ -139,6 +139,53 @@ class SATVideoDiffusionEngine(nn.Module):
         image = image + image_noise
         return image
 
+    def add_bbox_noise_to_frames(self, image, bbox_tensor):
+        """
+        Injects Gaussian noise into each frame of the image based on the bounding boxes,
+        excluding the first frame which retains the reference image with added noise.
+        """
+        B, C, T, H, W = image.shape  # Assuming image now has shape [B, C, T, H, W]
+        _, _, N, _ = bbox_tensor.shape  # N is the number of bounding boxes per frame
+
+        # Only add Gaussian noise to frames after the first
+        for b in range(B):
+            for t in range(1, T):
+                # Extract the bounding boxes for frame t
+                bboxes = bbox_tensor[b, t]  # Shape: [N, 4]
+                for n in range(N):
+                    bbox = bboxes[n]
+                    x1, y1, x2, y2 = bbox
+                    x1 = int(torch.clamp(x1, 0, W - 1).item())
+                    y1 = int(torch.clamp(y1, 0, H - 1).item())
+                    x2 = int(torch.clamp(x2, x1 + 1, W).item())
+                    y2 = int(torch.clamp(y2, y1 + 1, H).item())
+                    h = y2 - y1
+                    w = x2 - x1
+
+                    if h <= 0 or w <= 0:
+                        continue  # Skip invalid bounding boxes
+
+                    # Generate a Gaussian mask
+                    y_coords = torch.arange(h, device=image.device).unsqueeze(1).repeat(1, w)
+                    x_coords = torch.arange(w, device=image.device).unsqueeze(0).repeat(h, 1)
+                    mx = (h - 1) / 2.0
+                    my = (w - 1) / 2.0
+                    sx = h / 3.0
+                    sy = w / 3.0
+                    gaussian = (1 / (2 * math.pi * sx * sy)) * torch.exp(
+                        -(((x_coords - my) ** 2) / (2 * sy ** 2) + ((y_coords - mx) ** 2) / (2 * sx ** 2))
+                    )
+                    gaussian = gaussian / gaussian.max()
+                    gaussian = gaussian.to(image.dtype)
+
+                    # Generate noise scaled by the Gaussian mask
+                    noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * gaussian.unsqueeze(0)
+
+                    # Add noise to the image in place
+                    image[b, :, t, y1:y2, x1:x2] += noise
+
+        return image
+
     def shared_step(self, batch: Dict) -> Any:
         x = self.get_input(batch)
         if self.lr_scale is not None:
@@ -326,6 +373,14 @@ class SATVideoDiffusionEngine(nn.Module):
         if self.noised_image_input:
             image = x[:, :, 0:1]
             image = self.add_noise_to_first_frame(image)
+            num_frames = batch['bbox'].shape[1]
+            subsequent_frames = torch.zeros(
+                (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
+                device=image.device,
+                dtype=image.dtype
+            )
+            image = torch.cat([image, subsequent_frames], dim=2)
+            image = self.add_bbox_noise_to_frames(image, batch['bbox'])
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
             image = torch.concat([image, torch.zeros_like(z[:, 1:])], dim=1)

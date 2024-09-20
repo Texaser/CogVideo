@@ -774,7 +774,6 @@ class DiffusionTransformer(BaseModel):
         b, t, d, h, w = x.shape
         if x.dtype != self.dtype:
             x = x.to(self.dtype)
-
         # This is not use in inference
         if "concat_images" in kwargs and kwargs["concat_images"] is not None:
             if kwargs["concat_images"].shape[0] != x.shape[0]:

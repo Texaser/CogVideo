@@ -71,6 +71,7 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
         super().__init__(**kwargs)
 
     def __call__(self, network, denoiser, conditioner, input, batch):
+        import pudb; pudb.set_trace()
         cond = conditioner(batch)
         additional_model_inputs = {key: batch[key] for key in self.batch2model_keys.intersection(batch)}
 

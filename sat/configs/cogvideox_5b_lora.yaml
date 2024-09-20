@@ -87,7 +87,7 @@ model:
     target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
     params:
       cp_size: 1
-      ckpt_path: "cogvideox-5b-sat/vae/3d-vae.pt"
+      ckpt_path: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-5b-sat/vae/3d-vae.pt"
       ignore_keys: [ 'loss' ]
 
       loss_config:
