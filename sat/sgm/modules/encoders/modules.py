@@ -331,6 +331,7 @@ class PrecomputedT5Embedder(AbstractEmbModel):
             "A basketball player making three free throws",
             "A basketball player missing three free throws",
             "A basketball player committing a disqualifying foul",
+            'A basketball player performs an action',
         ]
 
         self.action_to_index = {action: i for i, action in enumerate(self.basketball_actions)}

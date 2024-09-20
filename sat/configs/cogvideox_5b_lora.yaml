@@ -83,13 +83,13 @@ model:
       #       model_dir: "t5-v1_1-xxl"
       #       max_length: 226
       
-      # emb_models:
-      #   - is_trainable: false
-      #     input_key: txt
-      #     ucg_rate: 0.1
-      #     target: sgm.modules.encoders.modules.PrecomputedT5Embedder
-      #     params:
-      #       max_length: 226
+      emb_models:
+        - is_trainable: false
+          input_key: txt
+          ucg_rate: 0.1
+          target: sgm.modules.encoders.modules.PrecomputedT5Embedder
+          params:
+            max_length: 226
 
   first_stage_config:
     target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
