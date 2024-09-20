@@ -21,7 +21,8 @@ from sgm.util import (
 )
 import gc
 from sat import mpu
-
+from torchvision.utils import save_image
+import os
 
 class SATVideoDiffusionEngine(nn.Module):
     def __init__(self, args, **kwargs):
@@ -143,9 +144,13 @@ class SATVideoDiffusionEngine(nn.Module):
         """
         Injects Gaussian noise into each frame of the image based on the bounding boxes,
         excluding the first frame which retains the reference image with added noise.
+        Returns the modified image and the noise masks for visualization.
         """
-        B, C, T, H, W = image.shape  # Assuming image now has shape [B, C, T, H, W]
+        B, C, T, H, W = image.shape  # Assuming image shape is [B, C, T, H, W]
         _, _, N, _ = bbox_tensor.shape  # N is the number of bounding boxes per frame
+
+        # Initialize a tensor to store noise masks
+        noise_masks = torch.zeros_like(image)
 
         # Only add Gaussian noise to frames after the first
         for b in range(B):
@@ -154,11 +159,24 @@ class SATVideoDiffusionEngine(nn.Module):
                 bboxes = bbox_tensor[b, t]  # Shape: [N, 4]
                 for n in range(N):
                     bbox = bboxes[n]
-                    x1, y1, x2, y2 = bbox
+                    x1_norm, y1_norm, x2_norm, y2_norm = bbox
+
+                    # Convert normalized coordinates to pixel coordinates
+                    x1 = x1_norm * W
+                    y1 = y1_norm * H
+                    x2 = x2_norm * W
+                    y2 = y2_norm * H
+
+                    # Ensure coordinates are in the correct order
+                    x1, x2 = sorted([x1, x2])
+                    y1, y2 = sorted([y1, y2])
+
+                    # Convert to integers and clamp
                     x1 = int(torch.clamp(x1, 0, W - 1).item())
                     y1 = int(torch.clamp(y1, 0, H - 1).item())
                     x2 = int(torch.clamp(x2, x1 + 1, W).item())
                     y2 = int(torch.clamp(y2, y1 + 1, H).item())
+
                     h = y2 - y1
                     w = x2 - x1
 
@@ -184,7 +202,49 @@ class SATVideoDiffusionEngine(nn.Module):
                     # Add noise to the image in place
                     image[b, :, t, y1:y2, x1:x2] += noise
 
-        return image
+                    # Store the noise mask
+                    noise_masks[b, :, t, y1:y2, x1:x2] = noise
+
+        return image, noise_masks
+
+    def save_noisy_images(self, image, noise_masks, batch):
+        """
+        Saves the images after noise injection and the noise masks for visualization.
+        """
+        # Assuming image and noise_masks have shape [B, C, T, H, W]
+        B, C, T, H, W = image.shape
+
+        # Create a directory to save the images
+        save_dir = 'noisy_images'
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Optionally, get identifiers from the batch to name the files
+        for b in range(B):
+            for t in range(T):
+                img = image[b, :, t]  # Shape: [C, H, W]
+                noise_mask = noise_masks[b, :, t]  # Shape: [C, H, W]
+
+                # Convert tensors to CPU and detach
+                img = img.detach().cpu()
+                noise_mask = noise_mask.detach().cpu()
+
+                # Normalize images to [0, 1] for visualization
+                img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+                noise_mask = (noise_mask - noise_mask.min()) / (noise_mask.max() - noise_mask.min() + 1e-8)
+
+                # Save the image
+                img_filename = os.path.join(save_dir, f'image_b{b}_t{t}.png')
+                save_image(img, img_filename)
+
+                # Save the noise mask
+                noise_filename = os.path.join(save_dir, f'noise_b{b}_t{t}.png')
+                save_image(noise_mask, noise_filename)
+
+                # Optionally, save an overlay of the image and noise mask
+                overlay = img + noise_mask
+                overlay = overlay.clamp(0, 1)
+                overlay_filename = os.path.join(save_dir, f'overlay_b{b}_t{t}.png')
+                save_image(overlay, overlay_filename)
 
     def shared_step(self, batch: Dict) -> Any:
         x = self.get_input(batch)
@@ -198,16 +258,27 @@ class SATVideoDiffusionEngine(nn.Module):
         if self.noised_image_input:
             image = x[:, :, 0:1]
             image = self.add_noise_to_first_frame(image)
+            num_frames = batch['bbox'].shape[1]
+            subsequent_frames = torch.zeros(
+                (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
+                device=image.device,
+                dtype=image.dtype
+            )
+            image = torch.cat([image, subsequent_frames], dim=2)
+            image, noise_masks = self.add_bbox_noise_to_frames(image, batch['bbox'])
+
+            # Save the images and noise masks
+            self.save_noisy_images(image, noise_masks, batch)
             image = self.encode_first_stage(image, batch)
 
         x = self.encode_first_stage(x, batch)
         x = x.permute(0, 2, 1, 3, 4).contiguous()
         if self.noised_image_input:
             image = image.permute(0, 2, 1, 3, 4).contiguous()
-            if self.noised_image_all_concat:
-                image = image.repeat(1, x.shape[1], 1, 1, 1)
-            else:
-                image = torch.concat([image, torch.zeros_like(x[:, 1:])], dim=1)
+            # if self.noised_image_all_concat:
+            #     image = image.repeat(1, x.shape[1], 1, 1, 1)
+            # else:
+            #     image = torch.concat([image, torch.zeros_like(x[:, 1:])], dim=1)
             if random.random() < self.noised_image_dropout:
                 image = torch.zeros_like(image)
             batch["concat_images"] = image
@@ -371,6 +442,7 @@ class SATVideoDiffusionEngine(nn.Module):
                 c[k], uc[k] = map(lambda y: y[k][:N].to(self.device), (c, uc))
 
         if self.noised_image_input:
+            import pudb; pudb.set_trace()
             image = x[:, :, 0:1]
             image = self.add_noise_to_first_frame(image)
             num_frames = batch['bbox'].shape[1]

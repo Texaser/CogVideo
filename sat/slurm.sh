@@ -22,7 +22,7 @@ export OMP_NUM_THREADS=52
 export PYTHONWARNINGS="ignore"
 
 # TODO: change to the device(s) you wish to run on
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 
 TORCHRUN_OPTIONS=(
     --standalone
