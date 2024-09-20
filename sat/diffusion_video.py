@@ -268,7 +268,7 @@ class SATVideoDiffusionEngine(nn.Module):
             image, noise_masks = self.add_bbox_noise_to_frames(image, batch['bbox'])
 
             # Save the images and noise masks
-            self.save_noisy_images(image, noise_masks, batch)
+            #self.save_noisy_images(image, noise_masks, batch)
             image = self.encode_first_stage(image, batch)
 
         x = self.encode_first_stage(x, batch)
@@ -442,7 +442,6 @@ class SATVideoDiffusionEngine(nn.Module):
                 c[k], uc[k] = map(lambda y: y[k][:N].to(self.device), (c, uc))
 
         if self.noised_image_input:
-            import pudb; pudb.set_trace()
             image = x[:, :, 0:1]
             image = self.add_noise_to_first_frame(image)
             num_frames = batch['bbox'].shape[1]
