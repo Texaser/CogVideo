@@ -1,19 +1,19 @@
 args:
   checkpoint_activations: True ## using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 5b_lora_wo
+  experiment_name: 2b-full-reference-frame
   mode: finetune
-  load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-5b-sat/transformer"
+  load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-2b-sat/transformer"
   no_load_rng: True
-  train_iters: 5000 # Suggest more than 1000 For Lora and SFT For 500 is enough
+  train_iters: 10000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
-  eval_interval: 1000
+  eval_interval: 500
   eval_batch_size: 1
-  save: ckpts_5b_lora
-  save_interval: 1000
+  save: ckpts_2b_full
+  save_interval: 500
   log_interval: 20
-  train_data: [ "/mnt/mir/fan23j/data/hq-standard" ] # Train data path
-  valid_data: [ "/mnt/mir/fan23j/data/hq-standard" ] # Validation data path, can be the same as train_data(not recommended)
+  train_data: [ "/mnt/mir/fan23j/data/hq-traj" ] # Train data path
+  valid_data: [ "/mnt/mir/fan23j/data/hq-traj" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
   num_workers: 8
   force_train: True
@@ -49,9 +49,9 @@ deepspeed:
 
   ###
   bf16:
-      enabled: True  # For CogVideoX-2B Turn to False and For CogVideoX-5B Turn to True
+      enabled: False  # For CogVideoX-2B Turn to False and For CogVideoX-5B Turn to True
   fp16:
-      enabled: False  # For CogVideoX-2B Turn to True and For CogVideoX-5B Turn to False
+      enabled: True  # For CogVideoX-2B Turn to True and For CogVideoX-5B Turn to False
   ###
 
   loss_scale: 0
@@ -62,7 +62,7 @@ deepspeed:
   optimizer:
     type: sat.ops.FusedEmaAdam
     params:
-      lr: 0.00001 # Between 1E-3 and 5E-4 For Lora and 1E-5 For SFT
+      lr: 1e-5 # Between 1E-3 and 5E-4 For Lora and 1E-5 For SFT
       betas: [ 0.9, 0.95 ]
       eps: 1e-8
       weight_decay: 1e-4

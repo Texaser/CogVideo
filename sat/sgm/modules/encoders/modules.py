@@ -11,6 +11,7 @@ import torch.nn as nn
 from einops import rearrange, repeat
 from omegaconf import ListConfig
 from torch.utils.checkpoint import checkpoint
+import timm
 from transformers import (
     T5EncoderModel,
     T5Tokenizer,
@@ -73,7 +74,7 @@ class AbstractEmbModel(nn.Module):
 
 class GeneralConditioner(nn.Module):
     OUTPUT_DIM2KEYS = {2: "vector", 3: "crossattn", 4: "concat", 5: "concat"}
-    KEY2CATDIM = {"vector": 1, "crossattn": 2, "concat": 1}
+    KEY2CATDIM = {"vector": 1, "crossattn": 1, "concat": 1}
 
     def __init__(self, emb_models: Union[List, ListConfig], cor_embs=[], cor_p=[]):
         super().__init__()
@@ -350,3 +351,76 @@ class PrecomputedT5Embedder(AbstractEmbModel):
 
     def encode(self, text):
         return self(text)
+
+class ReferenceFrameEmbedder(AbstractEmbModel):
+    def __init__(
+        self,
+        out_dim,
+        num_tokens,
+        use_bf16=False,
+        device="cuda",
+    ):
+        super().__init__()
+        self.device = device
+        self.out_dim = out_dim
+        self.num_tokens = num_tokens
+        self.dtype = torch.bfloat16 if use_bf16 else torch.float16
+
+        # Load a pretrained ViT model
+        self.vit = timm.create_model('vit_base_patch16_224', pretrained=True)
+        self.vit.head = nn.Identity()  # Remove the classification head
+        self.vit = self.vit.to(device).to(self.dtype)
+
+        # Freeze the ViT parameters
+        for param in self.vit.parameters():
+            param.requires_grad = False
+
+        # Add a trainable projection layer
+        self.proj = nn.Linear(self.vit.num_features, out_dim * num_tokens).to(device).to(self.dtype)
+
+        # Ensure the projection layer is trainable
+        for param in self.proj.parameters():
+            param.requires_grad = True
+
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        nn.init.xavier_uniform_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, frames):
+        # frames shape: [1, 49, 3, 480, 720]
+        # Extract only the first frame
+        first_frame = frames[:, 0, :, :, :]  # Shape: [1, 3, 480, 720]
+        
+        # Move to device and adjust dtype
+        first_frame = first_frame.to(self.device).to(self.dtype)
+        
+        # Resize frame to 224x224 (ViT's expected input size)
+        first_frame = nn.functional.interpolate(first_frame, size=(224, 224), mode='bilinear', align_corners=False)
+        
+        # Pass through ViT (in eval mode to respect frozen weights)
+        self.vit.eval()
+        with torch.no_grad():
+            features = self.vit(first_frame)  # Shape: [1, vit.num_features]
+        
+        # Project to desired dimension and reshape (this part is trainable)
+        features = self.proj(features)  # Shape: [1, out_dim * num_tokens]
+        features = features.view(1, self.num_tokens, self.out_dim)
+        
+        return features  # Shape: [1, num_tokens, out_dim]
+
+    def encode(self, frames):
+        # For encoding, we want to be in eval mode
+        self.eval()
+        with torch.no_grad():
+            return self.forward(frames)
+
+    def train(self, mode=True):
+        # Override to keep vit in eval mode even when training
+        nn.Module.train(self, mode)
+        self.vit.eval()
+        return self
+
+    def get_trainable_params(self):
+        return self.proj.parameters()
