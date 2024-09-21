@@ -451,10 +451,10 @@ class SATVideoDiffusionEngine(nn.Module):
                 dtype=image.dtype
             )
             image = torch.cat([image, subsequent_frames], dim=2)
-            image = self.add_bbox_noise_to_frames(image, batch['bbox'])
+            image, _ = self.add_bbox_noise_to_frames(image, batch['bbox'])
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
-            image = torch.concat([image, torch.zeros_like(z[:, 1:])], dim=1)
+            # image = torch.concat([image, torch.zeros_like(z[:, 1:])], dim=1)
             c["concat"] = image
             uc["concat"] = image
             samples = self.sample(c, shape=z.shape[1:], uc=uc, batch_size=N, **sampling_kwargs)  # b t c h w
