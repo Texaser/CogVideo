@@ -23,11 +23,11 @@ export PYTHONWARNINGS="ignore"
 # TODO: change to the device(s) you wish to run on
 export CUDA_VISIBLE_DEVICES=2
 
+# TODO: optionally change --nproc_per_node to match # GPUs you plan to run on
 TORCHRUN_OPTIONS=(
     --standalone
     --nproc_per_node=1
 )
-# TODO: optionally change --nproc_per_node to match # GPUs you plan to run on
 
 TRAIN_SCRIPT="train_video.py"
 TRAIN_OPTIONS=(

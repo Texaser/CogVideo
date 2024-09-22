@@ -78,6 +78,7 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
         alphas_cumprod_sqrt = alphas_cumprod_sqrt.to(input.device)
         idx = idx.to(input.device)
 
+        # z
         noise = torch.randn_like(input)
 
         # broadcast noise

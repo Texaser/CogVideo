@@ -1,26 +1,34 @@
 import io
 import os
 import sys
-from functools import partial
 import math
-import torchvision.transforms as TT
-from sgm.webds import MetaDistributedWebDataset
+import json
+import time
 import random
+import torch
+import decord
+import threading
+import numpy as np
+import torchvision.transforms as TT
+
+from glob import glob
+from sgm.webds import MetaDistributedWebDataset
 from fractions import Fraction
 from typing import Union, Optional, Dict, Any, Tuple
 from torchvision.io.video import av
-import numpy as np
-import torch
 from torchvision.io import _video_opt
-from torchvision.io.video import _check_av_available, _read_from_stream, _align_audio_frames
+from torchvision.io.video import (
+    _check_av_available,
+    _read_from_stream,
+    _align_audio_frames,
+)
 from torchvision.transforms.functional import center_crop, resize
 from torchvision.transforms import InterpolationMode
-import decord
+from functools import partial
 from decord import VideoReader
 from torch.utils.data import Dataset
 from tqdm import tqdm
-import json
-import time
+
 
 def read_video(
     filename: str,
@@ -50,7 +58,9 @@ def read_video(
 
     output_format = output_format.upper()
     if output_format not in ("THWC", "TCHW"):
-        raise ValueError(f"output_format should be either 'THWC' or 'TCHW', got {output_format}.")
+        raise ValueError(
+            f"output_format should be either 'THWC' or 'TCHW', got {output_format}."
+        )
 
     _check_av_available()
 
@@ -58,7 +68,9 @@ def read_video(
         end_pts = float("inf")
 
     if end_pts < start_pts:
-        raise ValueError(f"end_pts should be larger than start_pts, got start_pts={start_pts} and end_pts={end_pts}")
+        raise ValueError(
+            f"end_pts should be larger than start_pts, got start_pts={start_pts} and end_pts={end_pts}"
+        )
 
     info = {}
     audio_frames = []
@@ -125,7 +137,9 @@ def resize_for_rectangle_crop(arr, image_size, reshape_mode="random"):
         new_width = image_size[1]
         new_height = int(arr.shape[2] * scale)
 
-    arr = resize(arr, size=[new_height, new_width], interpolation=InterpolationMode.BICUBIC)
+    arr = resize(
+        arr, size=[new_height, new_width], interpolation=InterpolationMode.BICUBIC
+    )
     h, w = arr.shape[2], arr.shape[3]
 
     delta_h = h - image_size[0]
@@ -139,10 +153,11 @@ def resize_for_rectangle_crop(arr, image_size, reshape_mode="random"):
     else:
         raise NotImplementedError
 
-    arr = TT.functional.crop(arr, top=top, left=left, height=image_size[0], width=image_size[1])
+    arr = TT.functional.crop(
+        arr, top=top, left=left, height=image_size[0], width=image_size[1]
+    )
 
     return arr, scale, top, left, original_width, original_height
-
 
 
 def pad_last_frame(tensor, num_frames):
@@ -188,13 +203,14 @@ def load_video(
     # get_batch -> T, H, W, C
     temp_frms = vr.get_batch(np.arange(start, end))
     assert temp_frms is not None
-    tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
+    tensor_frms = (
+        torch.from_numpy(temp_frms)
+        if type(temp_frms) is not torch.Tensor
+        else temp_frms
+    )
     tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
 
     return pad_last_frame(tensor_frms, num_frames)
-
-
-import threading
 
 
 def load_video_with_timeout(*args, **kwargs):
@@ -254,7 +270,9 @@ def process_video(
     return video
 
 
-def process_fn_video(src, image_size, fps, num_frames, skip_frms_num=0.0, txt_key="caption"):
+def process_fn_video(
+    src, image_size, fps, num_frames, skip_frms_num=0.0, txt_key="caption"
+):
     while True:
         r = next(src)
         if "mp4" in r:
@@ -344,7 +362,11 @@ class VideoDataset(MetaDistributedWebDataset):
         super().__init__(
             path,
             partial(
-                process_fn_video, num_frames=num_frames, image_size=image_size, fps=fps, skip_frms_num=skip_frms_num
+                process_fn_video,
+                num_frames=num_frames,
+                image_size=image_size,
+                fps=fps,
+                skip_frms_num=skip_frms_num,
             ),
             seed,
             meta_names=meta_names,
@@ -359,43 +381,49 @@ class VideoDataset(MetaDistributedWebDataset):
 
 
 class SFTDataset(Dataset):
-    def __init__(self, data_dir, video_size, fps, max_num_frames, skip_frms_num=3):
+    
+    def __init__(self, data_dir: str, video_size, fps, max_num_frames, skip_frms_num=3):
         """
-        skip_frms_num: ignore the first and the last xx frames, avoiding transitions.
+        
+        Args:
+            data_dir (str): Path to the data directory with the following structure:
+                - 'game'
+                    - 'period'
+                        - 'annotation.json'
+            skip_frms_num (int):
+                - ignore the first and the last xx frames, avoiding transitions.
         """
-        super(SFTDataset, self).__init__()
+        
+        assert os.path.isdir(data_dir), f"Error: could not find dir @{data_dir}"
 
+        super(SFTDataset, self).__init__()
+        
         self.video_size = video_size
         self.fps = fps
         self.max_num_frames = max_num_frames
         self.skip_frms_num = skip_frms_num
-
         self.video_paths = []
         self.captions = []
         self.tracklets = []
-
         start_time = time.time()
         
-        total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
-                        for filename in filenames if filename.endswith(".json"))
+        # find all `.json` files in `data_dir`
+        file_paths = glob(os.path.join(data_dir, "*", "*", "*.json"))
+        for fp in tqdm(file_paths, desc="Loading Training Data"):
+            with open(fp, "r") as f:
+                data = json.load(f)
+                # TODO: fix path in annotations
+                video_path = data["video_path"].replace(
+                    "/playpen-storage", "/mnt/mir"
+                )
+                self.video_paths.append(video_path)
+                caption = data["caption"]
+                self.captions.append(caption)
+                bounding_boxes = data["bounding_boxes"]
+                self.tracklets.append(self.encode_bbox_tracklet(bounding_boxes))
 
-        with tqdm(total=total_files, desc="Loading Data") as pbar:
-            for root, dirnames, filenames in os.walk(data_dir):
-                for filename in filenames:
-                    if filename.endswith(".json"):
-                        with open(os.path.join(root, filename), "r") as f:
-                            data = json.load(f)
-                        # TODO: fix path in annotations
-                        video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
-                        self.video_paths.append(video_path)
-
-                        caption = data['caption']
-                        self.captions.append(caption)
-
-                        bounding_boxes = data['bounding_boxes']
-                        self.tracklets.append(self.encode_bbox_tracklet(bounding_boxes))
-
-                        pbar.update(1)
+        # HACK: exit early
+        assert False
 
         end_time = time.time()
         loading_time = end_time - start_time
@@ -418,9 +446,15 @@ class SFTDataset(Dataset):
         indices = np.arange(start, end, (end - start) // num_frames).astype(int)
         temp_frms = vr.get_batch(np.arange(start, end_safty))
         assert temp_frms is not None
-        tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
+        tensor_frms = (
+            torch.from_numpy(temp_frms)
+            if type(temp_frms) is not torch.Tensor
+            else temp_frms
+        )
         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-        tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]
+        tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())][
+            :num_frames
+        ]
         # else:
         #     if ori_vlen > self.max_num_frames:
         #         num_frames = self.max_num_frames
@@ -456,7 +490,9 @@ class SFTDataset(Dataset):
             tensor_frms, self.video_size, reshape_mode="center"
         )
         tensor_frms = (tensor_frms - 127.5) / 127.5
-        tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
+        tracklet_frms = self.adjust_bounding_boxes(
+            tracklet_frms, scale, top, left, orig_w, orig_h
+        )
         item = {
             "mp4": tensor_frms,
             "bbox": tracklet_frms,
@@ -490,18 +526,25 @@ class SFTDataset(Dataset):
         bounding_boxes = bounding_boxes.clip(0, 1)
 
         return bounding_boxes
-        
+
     def encode_bbox_tracklet(self, bounding_boxes):
         num_frames = len(bounding_boxes)
         num_players = 10
-        
-        trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
-        
+
+        trajectory_data = [
+            [[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)
+        ]
+
         for frame_idx, frame in enumerate(bounding_boxes):
-            assert len(frame['bounding_box_instances']) == num_players
-            for player_idx, box in enumerate(frame['bounding_box_instances']):
+            assert len(frame["bounding_box_instances"]) == num_players
+            for player_idx, box in enumerate(frame["bounding_box_instances"]):
                 if box is not None:  # TODO: handle in data
-                    trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
+                    trajectory_data[frame_idx][player_idx] = [
+                        box["x1"],
+                        box["y1"],
+                        box["x2"],
+                        box["y2"],
+                    ]
         # TODO: handle type
         return torch.tensor(trajectory_data, dtype=torch.float16)
 
