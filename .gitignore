@@ -1,4 +1,7 @@
 *__pycache__/
+*.txt
+*.json
+
 samples*/
 runs/
 checkpoints/

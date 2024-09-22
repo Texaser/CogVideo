@@ -1,33 +1,34 @@
 #!/bin/bash
 #SBATCH --partition=h100
 #SBATCH --nodelist=bumblebee.ib
-#SBATCH --nodes=1              
-#SBATCH --cpus-per-task=16      
-#SBATCH --gres=gpu:1 # TODO: ensure this var matches the # GPUs you need
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=16
+#SBATCH --gres=gpu:1
 #SBATCH --time=1000:00:00
 
-set -e  # exit script if any command fails
-
-cd /mnt/mir/fan23j/CogVideo/sat
-
+# set -e  # exit script if any command fails
+cd /mnt/mir/levlevi/CogVideo/sat
 
 # find this path using `which conda`
-CONDA_PATH="/home/fan23j/anaconda3/"
+# CONDA_PATH="/playpen-storage/levlevi/anaconda3/condabin/conda"
 VENV_NAME="cogvideo"
 
-source "${CONDA_PATH}/etc/profile.d/conda.sh"
+# Initialize conda
+eval "$(conda shell.bash hook)"
 conda activate "${VENV_NAME}"
 
 export OMP_NUM_THREADS=52
 export PYTHONWARNINGS="ignore"
 
 # TODO: change to the device(s) you wish to run on
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=2
 
 TORCHRUN_OPTIONS=(
     --standalone
-    --nproc_per_node=1 # TODO: optionally change this to match # GPUs you plan to run on
+    --nproc_per_node=1
 )
+# TODO: optionally change --nproc_per_node to match # GPUs you plan to run on
+
 TRAIN_SCRIPT="train_video.py"
 TRAIN_OPTIONS=(
     --wandb
@@ -37,4 +38,6 @@ RUN_CMD=(
     torchrun "${TORCHRUN_OPTIONS[@]}"
     "${TRAIN_SCRIPT}" "${TRAIN_OPTIONS[@]}"
 )
-"${RUN_CMD[@]}"
+
+echo "${RUN_CMD[@]}"
+torchrun "${TORCHRUN_OPTIONS[@]}" "${TRAIN_SCRIPT}" "${TRAIN_OPTIONS[@]}"

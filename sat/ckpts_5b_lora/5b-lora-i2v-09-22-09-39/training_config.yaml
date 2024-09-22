@@ -1,0 +1,222 @@
+model:
+  scale_factor: 0.7
+  disable_first_stage_autocast: true
+  latent_input: false
+  noised_image_input: true
+  noised_image_dropout: 0.05
+  not_trainable_prefixes:
+  - all
+  log_keys:
+  - txt
+  denoiser_config:
+    target: sgm.modules.diffusionmodules.denoiser.DiscreteDenoiser
+    params:
+      num_idx: 1000
+      quantize_c_noise: false
+      weighting_config:
+        target: sgm.modules.diffusionmodules.denoiser_weighting.EpsWeighting
+      scaling_config:
+        target: sgm.modules.diffusionmodules.denoiser_scaling.VideoScaling
+      discretization_config:
+        target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
+        params:
+          shift_scale: 1.0
+  network_config:
+    target: dit_video_concat.DiffusionTransformer
+    params:
+      time_embed_dim: 512
+      elementwise_affine: true
+      num_frames: 49
+      time_compressed_rate: 4
+      latent_width: 90
+      latent_height: 60
+      num_layers: 42
+      patch_size: 2
+      in_channels: 32
+      out_channels: 16
+      hidden_size: 3072
+      adm_in_channels: 256
+      num_attention_heads: 48
+      transformer_args:
+        checkpoint_activations: true
+        vocab_size: 1
+        max_sequence_length: 64
+        layernorm_order: pre
+        skip_init: false
+        model_parallel_size: 1
+        is_decoder: false
+      modules:
+        pos_embed_config:
+          target: dit_video_concat.Rotary3DPositionEmbeddingMixin
+          params:
+            learnable_pos_embed: true
+            hidden_size_head: 64
+            text_length: 226
+        lora_config:
+          target: sat.model.finetune.lora2.LoraMixin
+          params:
+            r: 256
+        patch_embed_config:
+          target: dit_video_concat.ImagePatchEmbeddingMixin
+          params:
+            text_hidden_size: 4096
+        adaln_layer_config:
+          target: dit_video_concat.AdaLNMixin
+          params:
+            qk_ln: true
+        final_layer_config:
+          target: dit_video_concat.FinalLayerMixin
+  conditioner_config:
+    target: sgm.modules.GeneralConditioner
+    params:
+      emb_models:
+      - is_trainable: false
+        input_key: txt
+        ucg_rate: 0.1
+        target: sgm.modules.encoders.modules.PrecomputedT5Embedder
+        params:
+          max_length: 226
+  first_stage_config:
+    target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
+    params:
+      cp_size: 1
+      ckpt_path: /mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-5b-sat/vae/3d-vae.pt
+      ignore_keys:
+      - loss
+      loss_config:
+        target: torch.nn.Identity
+      regularizer_config:
+        target: vae_modules.regularizers.DiagonalGaussianRegularizer
+      encoder_config:
+        target: vae_modules.cp_enc_dec.ContextParallelEncoder3D
+        params:
+          double_z: true
+          z_channels: 16
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 2
+          - 2
+          - 4
+          attn_resolutions: []
+          num_res_blocks: 3
+          dropout: 0.0
+          gather_norm: true
+      decoder_config:
+        target: vae_modules.cp_enc_dec.ContextParallelDecoder3D
+        params:
+          double_z: true
+          z_channels: 16
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 2
+          - 2
+          - 4
+          attn_resolutions: []
+          num_res_blocks: 3
+          dropout: 0.0
+          gather_norm: true
+  loss_fn_config:
+    target: sgm.modules.diffusionmodules.loss.VideoDiffusionLoss
+    params:
+      fixed_frames: 0
+      offset_noise_level: 0
+      sigma_sampler_config:
+        target: sgm.modules.diffusionmodules.sigma_sampling.DiscreteSampling
+        params:
+          uniform_sampling: true
+          num_idx: 1000
+          discretization_config:
+            target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
+            params:
+              shift_scale: 1.0
+  sampler_config:
+    target: sgm.modules.diffusionmodules.sampling.VPSDEDPMPP2MSampler
+    params:
+      fixed_frames: 0
+      num_steps: 50
+      verbose: true
+      discretization_config:
+        target: sgm.modules.diffusionmodules.discretizer.ZeroSNRDDPMDiscretization
+        params:
+          shift_scale: 1.0
+      guider_config:
+        target: sgm.modules.diffusionmodules.guiders.DynamicCFG
+        params:
+          scale: 6
+          exp: 5
+          num_steps: 50
+args:
+  checkpoint_activations: true
+  model_parallel_size: 1
+  experiment_name: 5b-lora-i2v
+  mode: finetune
+  load: /mnt/mir/fan23j/CogVideo/pretrained/5b-i2v
+  no_load_rng: true
+  train_iters: 10000
+  eval_iters: 1
+  eval_interval: 500
+  eval_batch_size: 1
+  save: ckpts_5b_lora
+  save_interval: 500
+  log_interval: 20
+  train_data:
+  - /mnt/mir/fan23j/data/hq-traj
+  valid_data:
+  - /mnt/mir/fan23j/data/hq-traj
+  split: 1,0,0
+  num_workers: 8
+  force_train: true
+  only_log_video_latents: false
+data:
+  target: data_video.SFTDataset
+  params:
+    video_size:
+    - 480
+    - 720
+    fps: 8
+    max_num_frames: 49
+    skip_frms_num: 3.0
+deepspeed:
+  train_micro_batch_size_per_gpu: 1
+  gradient_accumulation_steps: 1
+  steps_per_print: 50
+  gradient_clipping: 0.1
+  zero_optimization:
+    stage: 2
+    cpu_offload: false
+    contiguous_gradients: false
+    overlap_comm: true
+    reduce_scatter: true
+    reduce_bucket_size: 1000000000
+    allgather_bucket_size: 1000000000
+    load_from_fp32_weights: false
+  zero_allow_untested_optimizer: true
+  bf16:
+    enabled: true
+  fp16:
+    enabled: false
+  loss_scale: 0
+  loss_scale_window: 400
+  hysteresis: 2
+  min_loss_scale: 1
+  optimizer:
+    type: sat.ops.FusedEmaAdam
+    params:
+      lr: 0.0005
+      betas:
+      - 0.9
+      - 0.95
+      eps: 1.0e-08
+      weight_decay: 0.0001
+  activation_checkpointing:
+    partition_activations: false
+    contiguous_memory_optimization: false
+  wall_clock_breakdown: false

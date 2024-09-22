@@ -37,6 +37,9 @@ class ImagePatchEmbeddingMixin(BaseMixin):
             self.text_proj = None
 
     def word_embedding_forward(self, input_ids, **kwargs):
+        
+        # breakpoint()
+        
         # now is 3d patch
         images = kwargs["images"]  # (b,t,c,h,w)
         B, T = images.shape[:2]
@@ -250,6 +253,7 @@ def rotate_half(x):
 
 
 class Rotary3DPositionEmbeddingMixin(BaseMixin):
+    
     def __init__(
         self,
         height,
@@ -480,14 +484,21 @@ class AdaLNMixin(BaseMixin):
         *args,
         **kwargs,
     ):
+        
+        # breakpoint()
         text_length = kwargs["text_length"]
+        
         # hidden_states (b,(n_t+t*n_i),d)
+        # split [text, img] conditions
         text_hidden_states = hidden_states[:, :text_length]  # (b,n,d)
         img_hidden_states = hidden_states[:, text_length:]  # (b,(t n),d)
 
+        # transformer block at the current `layer_id` idx
         layer = self.transformer.layers[kwargs["layer_id"]]
         adaLN_modulation = self.adaLN_modulations[kwargs["layer_id"]]
-
+        
+        # calculate text_emb -> adaLN_mod -> text_emb[::12]
+        # adaLN_mod: proj layer 512 -> (3072 * 12)
         (
             shift_msa,
             scale_msa,
@@ -502,6 +513,7 @@ class AdaLNMixin(BaseMixin):
             text_scale_mlp,
             text_gate_mlp,
         ) = adaLN_modulation(kwargs["emb"]).chunk(12, dim=1)
+        
         gate_msa, gate_mlp, text_gate_msa, text_gate_mlp = (
             gate_msa.unsqueeze(1),
             gate_mlp.unsqueeze(1),
@@ -510,37 +522,58 @@ class AdaLNMixin(BaseMixin):
         )
 
         # self full attention (b,(t n),d)
+        # layernorm
         img_attention_input = layer.input_layernorm(img_hidden_states)
         text_attention_input = layer.input_layernorm(text_hidden_states)
+        
+        # modulate (shift, scale)
         img_attention_input = modulate(img_attention_input, shift_msa, scale_msa)
         text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_msa)
-
+        
+        # concat all features
         attention_input = torch.cat((text_attention_input, img_attention_input), dim=1)  # (b,n_t+t*n_i,d)
+        
+        # calculate self-attention
         attention_output = layer.attention(attention_input, mask, **kwargs)
+        
+        # split
         text_attention_output = attention_output[:, :text_length]  # (b,n,d)
         img_attention_output = attention_output[:, text_length:]  # (b,(t n),d)
+        
+        # we used `self.layernorm_order = 'pre'`
         if self.transformer.layernorm_order == "sandwich":
             text_attention_output = layer.third_layernorm(text_attention_output)
             img_attention_output = layer.third_layernorm(img_attention_output)
+       
+       
         img_hidden_states = img_hidden_states + gate_msa * img_attention_output  # (b,(t n),d)
         text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output  # (b,n,d)
 
         # mlp (b,(t n),d)
+        # layernorm
         img_mlp_input = layer.post_attention_layernorm(img_hidden_states)  # vision (b,(t n),d)
         text_mlp_input = layer.post_attention_layernorm(text_hidden_states)  # language (b,n,d)
+        
+        # mod (scale + shift)
         img_mlp_input = modulate(img_mlp_input, shift_mlp, scale_mlp)
         text_mlp_input = modulate(text_mlp_input, text_shift_mlp, text_scale_mlp)
+        
+        # concat
         mlp_input = torch.cat((text_mlp_input, img_mlp_input), dim=1)  # (b,(n_t+t*n_i),d
         mlp_output = layer.mlp(mlp_input, **kwargs)
+        
+        # split
         img_mlp_output = mlp_output[:, text_length:]  # vision (b,(t n),d)
         text_mlp_output = mlp_output[:, :text_length]  # language (b,n,d)
+        
+        # we use `pre`
         if self.transformer.layernorm_order == "sandwich":
             text_mlp_output = layer.fourth_layernorm(text_mlp_output)
             img_mlp_output = layer.fourth_layernorm(img_mlp_output)
 
+        # gate + apply mlp
         img_hidden_states = img_hidden_states + gate_mlp * img_mlp_output  # vision (b,(t n),d)
         text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output  # language (b,n,d)
-
         hidden_states = torch.cat((text_hidden_states, img_hidden_states), dim=1)  # (b,(n_t+t*n_i),d)
         return hidden_states
 
@@ -800,6 +833,7 @@ class DiffusionTransformer(BaseModel):
         kwargs["encoder_outputs"] = context
         kwargs["text_length"] = context.shape[1]
 
+        # HACK: hard-coded positional ids
         kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
         output = super().forward(**kwargs)[0]
         return output

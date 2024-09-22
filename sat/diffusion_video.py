@@ -268,7 +268,7 @@ class SATVideoDiffusionEngine(nn.Module):
             image, noise_masks = self.add_bbox_noise_to_frames(image, batch['bbox'])
 
             # Save the images and noise masks
-            #self.save_noisy_images(image, noise_masks, batch)
+            # self.save_noisy_images(image, noise_masks, batch)
             image = self.encode_first_stage(image, batch)
 
         x = self.encode_first_stage(x, batch)
