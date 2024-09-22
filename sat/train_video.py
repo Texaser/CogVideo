@@ -1,19 +1,20 @@
 import os
 import argparse
-import numpy as np
-import torch.distributed
 import imageio
-import torch
 import yaml
+import torch
+import torch.distributed
+import numpy as np
 
+from sat import mpu
+from typing import Dict
 from omegaconf import OmegaConf
 from functools import partial
-from sat import mpu
+from arguments import get_args
+from einops import rearrange
 from sat.training.deepspeed_training import training_main
 from sgm.util import get_obj_from_str, isheatmap
 from diffusion_video import SATVideoDiffusionEngine
-from arguments import get_args
-from einops import rearrange
 
 try:
     import wandb
@@ -59,59 +60,66 @@ def save_video_as_grid_and_mp4(
             )
 
 
-def log_video(batch, model, args, only_log_video_latents=False):
+def log_video(batch: Dict, model, args, only_log_video_latents=False):
+
     texts = batch["txt"]
     text_save_dir = os.path.join(args.save, "video_texts")
+
+    # save text prompts to output dir
     os.makedirs(text_save_dir, exist_ok=True)
     save_texts(texts, text_save_dir, args.iteration)
 
+    breakpoint()
     gpu_autocast_kwargs = {
         "enabled": torch.is_autocast_enabled(),
         "dtype": torch.get_autocast_gpu_dtype(),
         "cache_enabled": torch.is_autocast_cache_enabled(),
     }
+
+    # i'm not touching the depreciated autocast (:
     with torch.no_grad(), torch.cuda.amp.autocast(**gpu_autocast_kwargs):
         videos = model.log_video(batch, only_log_video_latents=only_log_video_latents)
 
-    if torch.distributed.get_rank() == 0:
-        root = os.path.join(args.save, "video")
+    if not torch.distributed.get_rank() == 0:
+        return
 
+    root = os.path.join(args.save, "video")
+    if only_log_video_latents:
+        root = os.path.join(root, "latents")
+        filename = "{}_gs-{:06}".format("latents", args.iteration)
+        path = os.path.join(root, filename)
+        os.makedirs(os.path.split(path)[0], exist_ok=True)
+        os.makedirs(path, exist_ok=True)
+        torch.save(videos["latents"], os.path.join(path, "latent.pt"))
+    else:
+        for k in videos:
+            # copy vids -> CPU as needed
+            N = videos[k].shape[0]
+            if not isheatmap(videos[k]):
+                videos[k] = videos[k][:N]
+            if isinstance(videos[k], torch.Tensor):
+                videos[k] = videos[k].detach().float().cpu()
+                if not isheatmap(videos[k]):
+                    videos[k] = torch.clamp(videos[k], -1.0, 1.0)
+
+        num_frames = batch["num_frames"][0]
+        fps = batch["fps"][0].cpu().item()
         if only_log_video_latents:
             root = os.path.join(root, "latents")
             filename = "{}_gs-{:06}".format("latents", args.iteration)
             path = os.path.join(root, filename)
             os.makedirs(os.path.split(path)[0], exist_ok=True)
             os.makedirs(path, exist_ok=True)
-            torch.save(videos["latents"], os.path.join(path, "latent.pt"))
+            torch.save(videos["latents"], os.path.join(path, "latents.pt"))
         else:
             for k in videos:
-                N = videos[k].shape[0]
-                if not isheatmap(videos[k]):
-                    videos[k] = videos[k][:N]
-                if isinstance(videos[k], torch.Tensor):
-                    videos[k] = videos[k].detach().float().cpu()
-                    if not isheatmap(videos[k]):
-                        videos[k] = torch.clamp(videos[k], -1.0, 1.0)
-
-            num_frames = batch["num_frames"][0]
-            fps = batch["fps"][0].cpu().item()
-            if only_log_video_latents:
-                root = os.path.join(root, "latents")
-                filename = "{}_gs-{:06}".format("latents", args.iteration)
+                samples = (videos[k] + 1.0) / 2.0
+                filename = "{}_gs-{:06}".format(k, args.iteration)
                 path = os.path.join(root, filename)
                 os.makedirs(os.path.split(path)[0], exist_ok=True)
-                os.makedirs(path, exist_ok=True)
-                torch.save(videos["latents"], os.path.join(path, "latents.pt"))
-            else:
-                for k in videos:
-                    samples = (videos[k] + 1.0) / 2.0
-                    filename = "{}_gs-{:06}".format(k, args.iteration)
-
-                    path = os.path.join(root, filename)
-                    os.makedirs(os.path.split(path)[0], exist_ok=True)
-                    save_video_as_grid_and_mp4(
-                        samples, path, num_frames // fps, fps, args, k
-                    )
+                save_video_as_grid_and_mp4(
+                    samples, path, num_frames // fps, fps, args, k
+                )
 
 
 def broad_cast_batch(batch):
@@ -225,7 +233,7 @@ def forward_step(data_iterator, model, args, timers, data_class=None):
 
 
 if __name__ == "__main__":
-    
+
     if "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ:
         os.environ["LOCAL_RANK"] = os.environ["OMPI_COMM_WORLD_LOCAL_RANK"]
         os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
