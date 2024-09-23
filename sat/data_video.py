@@ -380,6 +380,9 @@ class SFTDataset(Dataset):
         
         total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
                         for filename in filenames if filename.endswith(".json"))
+        
+        data_3p = 0
+        data_ft = 0
 
         with tqdm(total=total_files, desc="Loading Data") as pbar:
             for root, dirnames, filenames in os.walk(data_dir):
@@ -388,13 +391,26 @@ class SFTDataset(Dataset):
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
                         # TODO: fix path in annotations
+                        caption = data['caption']
+
+                        if not (caption == "A basketball player making a free throw" or caption == "A basketball player making a three-point shot"):
+                        # if not (caption == "A basketball player making a three-point shot"):
+                            continue
+                        if caption == "A basketball player making a free throw":
+                            data_ft +=1
+                            self.captions.append(caption)
+                        elif "A basketball player making a three-point shot":
+                            data_3p += 1
+                            self.captions.append(caption)
+
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)
 
-                        caption = data['caption']
-                        self.captions.append(caption)
-
                         pbar.update(1)
+
+        print("data_3p", data_3p)
+        print("!!!!!")
+        print("data_ft", data_ft)
 
         end_time = time.time()
         loading_time = end_time - start_time

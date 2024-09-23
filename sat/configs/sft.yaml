@@ -1,19 +1,21 @@
 args:
   checkpoint_activations: True ## using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 5b_lora_wo
+  experiment_name: 2b_full
   mode: finetune
-  load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-5b-sat/transformer"
+  load: "/mnt/bum/hanyi/repo/CogVideo/sat/CogVideoX-2b-sat/transformer"
   no_load_rng: True
-  train_iters: 5000 # Suggest more than 1000 For Lora and SFT For 500 is enough
+  train_iters: 15000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
   eval_interval: 1000
   eval_batch_size: 1
-  save: ckpts_5b_lora
+  save: ckpts_2b
   save_interval: 1000
   log_interval: 20
-  train_data: [ "/mnt/bum/hanyi/repo/CogVideo/filtered-clips-annotations-200-frames/1038305_85_adelaide_36ers_89_new_zealand_breakers" ] # Train data path
-  valid_data: [ "/mnt/bum/hanyi/repo/CogVideo/filtered-clips-annotations-200-frames/1038305_85_adelaide_36ers_89_new_zealand_breakers" ] # Validation data path, can be the same as train_data(not recommended)
+  train_data: [ "/mnt/mir/fan23j/data/hq-standard" ] # Train data path
+  valid_data: [ "/mnt/mir/fan23j/data/hq-standard" ] # Validation data path, can be the same as train_data(not recommended)
+  # train_data: [ "/mnt/bum/hanyi/repo/CogVideo/filtered-clips-annotations/1038306_88_melbourne_united_87_illawarra_hawks" ] # Train data path
+  # valid_data: [ "/mnt/bum/hanyi/repo/CogVideo/filtered-clips-annotations/1038306_88_melbourne_united_87_illawarra_hawks" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
   num_workers: 8
   force_train: True
@@ -49,9 +51,9 @@ deepspeed:
 
   ###
   bf16:
-      enabled: True  # For CogVideoX-2B Turn to False and For CogVideoX-5B Turn to True
+      enabled: False  # For CogVideoX-2B Turn to False and For CogVideoX-5B Turn to True
   fp16:
-      enabled: False  # For CogVideoX-2B Turn to True and For CogVideoX-5B Turn to False
+      enabled: True  # For CogVideoX-2B Turn to True and For CogVideoX-5B Turn to False
   ###
 
   loss_scale: 0
