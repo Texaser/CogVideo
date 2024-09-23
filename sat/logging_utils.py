@@ -31,43 +31,31 @@ def draw_bbxs_on_frame(frame: np.ndarray, bbxs: np.ndarray) -> np.ndarray:
     TODO: we are only logging first-frame conditions atm.
     """
     
-    h, w, _ = frame.shape
-    
-    # [C, H, W] -> [H, W, C]
-    frame = frame.transpose((2, 0, 1))
-    
+    h, w = 480, 720
     for bbx in bbxs:
-        
+        breakpoint()
         x1_norm, y1_norm, x2_norm, y2_norm = bbx
-        
         # denormalize coordinates to pixel values
         x1 = int(x1_norm * w)
         x2 = int(x2_norm * w)
         y1 = int(y1_norm * h)
         y2 = int(y2_norm * h)
-        
         # ensure coordinates are within image dimensions
         x1, x2 = max(0, min(x1, w - 1)), max(0, min(x2, w - 1))
         y1, y2 = max(0, min(y1, h - 1)), max(0, min(y2, h - 1))
-        
         # ensure top-left and bottom-right ordering
         x1, x2 = sorted([x1, x2])
         y1, y2 = sorted([y1, y2])
-        
         try:
             # draw the rectangle on the frame
-            frame = cv2.rectangle(
-                frame, 
-                (x1, y1),
-                (x2, y2),
-                color=(0, 255, 0),
-                thickness=2,
-            )
+            # "god & gary bradski knows why...""
+            # we must use a copy of the original frame, otherwise this breaks
+            # https://stackoverflow.com/questions/23830618/python-opencv-typeerror-layout-of-the-output-array-incompatible-with-cvmat
+            frame = cv2.rectangle(frame.copy(), (x1, y1), (x2, y2), color=(0, 255, 0),thickness=3)
         except Exception as e:
             print(f"Error adding bbx to frame: {e}")
-    
-    # [H, W, C] -> [C, H, W]
-    return frame.transpose((2, 0, 1))
+            
+    return frame
 
 
 def save_video_as_grid_and_mp4(
@@ -97,12 +85,14 @@ def save_video_as_grid_and_mp4(
             # optionally draw gt-bbxs on frame
             if bbxs is not None:
                 frame = draw_bbxs_on_frame(frame, frame_bbxs)
+            # print(f"frame shape: {frame.shape}")
             gif_frames.append(frame)
         now_save_path = os.path.join(save_path, f"{i:06d}.mp4")
 
         # write video to out
         with imageio.get_writer(now_save_path, fps=fps) as writer:
             for frame in gif_frames:
+                # breakpoint()
                 writer.append_data(frame)
 
         if args is None or not args.wandb:
