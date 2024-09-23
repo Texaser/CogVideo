@@ -1,4 +1,6 @@
 *__pycache__/
+*__old__/
+
 **.txt
 **.json
 **.yaml
