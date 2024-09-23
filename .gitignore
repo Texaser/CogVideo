@@ -1,4 +1,7 @@
 *__pycache__/
+*__old__/
+*sat/ckpts_5b_lora
+
 **.txt
 **.json
 **.yaml

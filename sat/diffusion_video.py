@@ -247,6 +247,10 @@ class SATVideoDiffusionEngine(nn.Module):
                 save_image(overlay, overlay_filename)
 
     def shared_step(self, batch: Dict) -> Any:
+        """
+        TODO: explore
+        """
+        
         x = self.get_input(batch)
         if self.lr_scale is not None:
             lr_x = F.interpolate(x, scale_factor=1 / self.lr_scale, mode="bilinear", align_corners=False)
@@ -293,6 +297,7 @@ class SATVideoDiffusionEngine(nn.Module):
 
     @torch.no_grad()
     def decode_first_stage(self, z):
+        
         z = 1.0 / self.scale_factor * z
         n_samples = default(self.en_and_decode_n_samples_a_time, z.shape[0])
         n_rounds = math.ceil(z.shape[0] / n_samples)
@@ -310,8 +315,12 @@ class SATVideoDiffusionEngine(nn.Module):
 
     @torch.no_grad()
     def encode_first_stage(self, x, batch):
+        """
+        TODO: explore
+        """
+        
         frame = x.shape[2]
-
+        # don't think we use latent_input
         if frame > 1 and self.latent_input:
             x = x.permute(0, 2, 1, 3, 4).contiguous()
             return x * self.scale_factor  # already encoded

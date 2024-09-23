@@ -30,16 +30,22 @@ class ImagePatchEmbeddingMixin(BaseMixin):
         text_hidden_size=None,
     ):
         super().__init__()
-        self.proj = nn.Conv2d(in_channels, hidden_size, kernel_size=patch_size, stride=patch_size, bias=bias)
+        self.proj = nn.Conv2d(
+            in_channels,
+            hidden_size,
+            kernel_size=patch_size,
+            stride=patch_size,
+            bias=bias,
+        )
         if text_hidden_size is not None:
             self.text_proj = nn.Linear(text_hidden_size, hidden_size)
         else:
             self.text_proj = None
 
     def word_embedding_forward(self, input_ids, **kwargs):
-        
+
         # breakpoint()
-        
+
         # now is 3d patch
         images = kwargs["images"]  # (b,t,c,h,w)
         B, T = images.shape[:2]
@@ -98,9 +104,13 @@ def get_3d_sincos_pos_embed(
 
     # concate: [T, H, W] order
     pos_embed_temporal = pos_embed_temporal[:, np.newaxis, :]
-    pos_embed_temporal = np.repeat(pos_embed_temporal, grid_height * grid_width, axis=1)  # [T, H*W, D // 4]
+    pos_embed_temporal = np.repeat(
+        pos_embed_temporal, grid_height * grid_width, axis=1
+    )  # [T, H*W, D // 4]
     pos_embed_spatial = pos_embed_spatial[np.newaxis, :, :]
-    pos_embed_spatial = np.repeat(pos_embed_spatial, t_size, axis=0)  # [T, H*W, D // 4 * 3]
+    pos_embed_spatial = np.repeat(
+        pos_embed_spatial, t_size, axis=0
+    )  # [T, H*W, D // 4 * 3]
 
     pos_embed = np.concatenate([pos_embed_temporal, pos_embed_spatial], axis=-1)
     # pos_embed = pos_embed.reshape([-1, embed_dim])  # [T*H*W, D]
@@ -108,7 +118,9 @@ def get_3d_sincos_pos_embed(
     return pos_embed  # [T, H*W, D]
 
 
-def get_2d_sincos_pos_embed(embed_dim, grid_height, grid_width, cls_token=False, extra_tokens=0):
+def get_2d_sincos_pos_embed(
+    embed_dim, grid_height, grid_width, cls_token=False, extra_tokens=0
+):
     """
     grid_size: int of the grid height and width
     return:
@@ -122,7 +134,9 @@ def get_2d_sincos_pos_embed(embed_dim, grid_height, grid_width, cls_token=False,
     grid = grid.reshape([2, 1, grid_height, grid_width])
     pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
     if cls_token and extra_tokens > 0:
-        pos_embed = np.concatenate([np.zeros([extra_tokens, embed_dim]), pos_embed], axis=0)
+        pos_embed = np.concatenate(
+            [np.zeros([extra_tokens, embed_dim]), pos_embed], axis=0
+        )
     return pos_embed
 
 
@@ -159,13 +173,16 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 
 
 class Basic2DPositionEmbeddingMixin(BaseMixin):
-    def __init__(self, height, width, compressed_num_frames, hidden_size, text_length=0):
+    def __init__(
+        self, height, width, compressed_num_frames, hidden_size, text_length=0
+    ):
         super().__init__()
         self.height = height
         self.width = width
         self.spatial_length = height * width
         self.pos_embedding = nn.Parameter(
-            torch.zeros(1, int(text_length + self.spatial_length), int(hidden_size)), requires_grad=False
+            torch.zeros(1, int(text_length + self.spatial_length), int(hidden_size)),
+            requires_grad=False,
         )
 
     def position_embedding_forward(self, position_ids, **kwargs):
@@ -173,8 +190,12 @@ class Basic2DPositionEmbeddingMixin(BaseMixin):
 
     def reinit(self, parent_model=None):
         del self.transformer.position_embeddings
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embedding.shape[-1], self.height, self.width)
-        self.pos_embedding.data[:, -self.spatial_length :].copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+        pos_embed = get_2d_sincos_pos_embed(
+            self.pos_embedding.shape[-1], self.height, self.width
+        )
+        self.pos_embedding.data[:, -self.spatial_length :].copy_(
+            torch.from_numpy(pos_embed).float().unsqueeze(0)
+        )
 
 
 class Basic3DPositionEmbeddingMixin(BaseMixin):
@@ -198,7 +219,8 @@ class Basic3DPositionEmbeddingMixin(BaseMixin):
         self.spatial_length = height * width
         self.num_patches = height * width * compressed_num_frames
         self.pos_embedding = nn.Parameter(
-            torch.zeros(1, int(self.text_length + self.num_patches), int(hidden_size)), requires_grad=False
+            torch.zeros(1, int(self.text_length + self.num_patches), int(hidden_size)),
+            requires_grad=False,
         )
         self.height_interpolation = height_interpolation
         self.width_interpolation = width_interpolation
@@ -253,7 +275,7 @@ def rotate_half(x):
 
 
 class Rotary3DPositionEmbeddingMixin(BaseMixin):
-    
+
     def __init__(
         self,
         height,
@@ -273,9 +295,15 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         dim_h = hidden_size_head // 8 * 3
         dim_w = hidden_size_head // 8 * 3
 
-        freqs_t = 1.0 / (theta ** (torch.arange(0, dim_t, 2)[: (dim_t // 2)].float() / dim_t))
-        freqs_h = 1.0 / (theta ** (torch.arange(0, dim_h, 2)[: (dim_h // 2)].float() / dim_h))
-        freqs_w = 1.0 / (theta ** (torch.arange(0, dim_w, 2)[: (dim_w // 2)].float() / dim_w))
+        freqs_t = 1.0 / (
+            theta ** (torch.arange(0, dim_t, 2)[: (dim_t // 2)].float() / dim_t)
+        )
+        freqs_h = 1.0 / (
+            theta ** (torch.arange(0, dim_h, 2)[: (dim_h // 2)].float() / dim_h)
+        )
+        freqs_w = 1.0 / (
+            theta ** (torch.arange(0, dim_w, 2)[: (dim_w // 2)].float() / dim_w)
+        )
 
         grid_t = torch.arange(compressed_num_frames, dtype=torch.float32)
         grid_h = torch.arange(height, dtype=torch.float32)
@@ -289,7 +317,14 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         freqs_h = repeat(freqs_h, "... n -> ... (n r)", r=2)
         freqs_w = repeat(freqs_w, "... n -> ... (n r)", r=2)
 
-        freqs = broadcat((freqs_t[:, None, None, :], freqs_h[None, :, None, :], freqs_w[None, None, :, :]), dim=-1)
+        freqs = broadcat(
+            (
+                freqs_t[:, None, None, :],
+                freqs_h[None, :, None, :],
+                freqs_w[None, None, :, :],
+            ),
+            dim=-1,
+        )
         freqs = rearrange(freqs, "t h w d -> (t h w) d")
 
         freqs = freqs.contiguous()
@@ -301,7 +336,9 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         self.text_length = text_length
         if learnable_pos_embed:
             num_patches = height * width * compressed_num_frames + text_length
-            self.pos_embedding = nn.Parameter(torch.zeros(1, num_patches, int(hidden_size)), requires_grad=True)
+            self.pos_embedding = nn.Parameter(
+                torch.zeros(1, num_patches, int(hidden_size)), requires_grad=True
+            )
         else:
             self.pos_embedding = None
 
@@ -328,10 +365,16 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
     ):
         attention_fn_default = HOOKS_DEFAULT["attention_fn"]
 
-        query_layer[:, :, self.text_length :] = self.rotary(query_layer[:, :, self.text_length :])
-        key_layer[:, :, self.text_length :] = self.rotary(key_layer[:, :, self.text_length :])
+        query_layer[:, :, self.text_length :] = self.rotary(
+            query_layer[:, :, self.text_length :]
+        )
+        key_layer[:, :, self.text_length :] = self.rotary(
+            key_layer[:, :, self.text_length :]
+        )
         if self.rot_v:
-            value_layer[:, :, self.text_length :] = self.rotary(value_layer[:, :, self.text_length :])
+            value_layer[:, :, self.text_length :] = self.rotary(
+                value_layer[:, :, self.text_length :]
+            )
 
         return attention_fn_default(
             query_layer,
@@ -363,7 +406,9 @@ def unpatchify(x, c, p, w, h, rope_position_ids=None, **kwargs):
         imgs = x.reshape(shape=(x.shape[0], c, p, L * p))
     else:
         b = x.shape[0]
-        imgs = rearrange(x, "b (t h w) (c p q) -> b t c (h p) (w q)", b=b, h=h, w=w, c=c, p=p, q=p)
+        imgs = rearrange(
+            x, "b (t h w) (c p q) -> b t c (h p) (w q)", b=b, h=h, w=w, c=c, p=p, q=p
+        )
 
     return imgs
 
@@ -383,9 +428,15 @@ class FinalLayerMixin(BaseMixin):
         self.hidden_size = hidden_size
         self.patch_size = patch_size
         self.out_channels = out_channels
-        self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=elementwise_affine, eps=1e-6)
-        self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, bias=True)
-        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 2 * hidden_size, bias=True))
+        self.norm_final = nn.LayerNorm(
+            hidden_size, elementwise_affine=elementwise_affine, eps=1e-6
+        )
+        self.linear = nn.Linear(
+            hidden_size, patch_size * patch_size * out_channels, bias=True
+        )
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(), nn.Linear(time_embed_dim, 2 * hidden_size, bias=True)
+        )
 
         self.spatial_length = latent_width * latent_height // patch_size**2
         self.latent_width = latent_width
@@ -459,20 +510,31 @@ class AdaLNMixin(BaseMixin):
         self.compressed_num_frames = compressed_num_frames
 
         self.adaLN_modulations = nn.ModuleList(
-            [nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 12 * hidden_size)) for _ in range(num_layers)]
+            [
+                nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 12 * hidden_size))
+                for _ in range(num_layers)
+            ]
         )
 
         self.qk_ln = qk_ln
         if qk_ln:
             self.query_layernorm_list = nn.ModuleList(
                 [
-                    LayerNorm(hidden_size_head, eps=1e-6, elementwise_affine=elementwise_affine)
+                    LayerNorm(
+                        hidden_size_head,
+                        eps=1e-6,
+                        elementwise_affine=elementwise_affine,
+                    )
                     for _ in range(num_layers)
                 ]
             )
             self.key_layernorm_list = nn.ModuleList(
                 [
-                    LayerNorm(hidden_size_head, eps=1e-6, elementwise_affine=elementwise_affine)
+                    LayerNorm(
+                        hidden_size_head,
+                        eps=1e-6,
+                        elementwise_affine=elementwise_affine,
+                    )
                     for _ in range(num_layers)
                 ]
             )
@@ -484,10 +546,13 @@ class AdaLNMixin(BaseMixin):
         *args,
         **kwargs,
     ):
-        
+        """
+        Our custom transformer block forward func.
+        """
+
         # breakpoint()
         text_length = kwargs["text_length"]
-        
+
         # hidden_states (b,(n_t+t*n_i),d)
         # split [text, img] conditions
         text_hidden_states = hidden_states[:, :text_length]  # (b,n,d)
@@ -496,7 +561,7 @@ class AdaLNMixin(BaseMixin):
         # transformer block at the current `layer_id` idx
         layer = self.transformer.layers[kwargs["layer_id"]]
         adaLN_modulation = self.adaLN_modulations[kwargs["layer_id"]]
-        
+
         # calculate text_emb -> adaLN_mod -> text_emb[::12]
         # adaLN_mod: proj layer 512 -> (3072 * 12)
         (
@@ -513,7 +578,7 @@ class AdaLNMixin(BaseMixin):
             text_scale_mlp,
             text_gate_mlp,
         ) = adaLN_modulation(kwargs["emb"]).chunk(12, dim=1)
-        
+
         gate_msa, gate_mlp, text_gate_msa, text_gate_mlp = (
             gate_msa.unsqueeze(1),
             gate_mlp.unsqueeze(1),
@@ -525,56 +590,75 @@ class AdaLNMixin(BaseMixin):
         # layernorm
         img_attention_input = layer.input_layernorm(img_hidden_states)
         text_attention_input = layer.input_layernorm(text_hidden_states)
-        
+
         # modulate (shift, scale)
         img_attention_input = modulate(img_attention_input, shift_msa, scale_msa)
-        text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_msa)
-        
+        text_attention_input = modulate(
+            text_attention_input, text_shift_msa, text_scale_msa
+        )
+
         # concat all features
-        attention_input = torch.cat((text_attention_input, img_attention_input), dim=1)  # (b,n_t+t*n_i,d)
-        
+        attention_input = torch.cat(
+            (text_attention_input, img_attention_input), dim=1
+        )  # (b,n_t+t*n_i,d)
+
         # calculate self-attention
         attention_output = layer.attention(attention_input, mask, **kwargs)
-        
+
         # split
         text_attention_output = attention_output[:, :text_length]  # (b,n,d)
         img_attention_output = attention_output[:, text_length:]  # (b,(t n),d)
-        
+
         # we used `self.layernorm_order = 'pre'`
         if self.transformer.layernorm_order == "sandwich":
             text_attention_output = layer.third_layernorm(text_attention_output)
             img_attention_output = layer.third_layernorm(img_attention_output)
-       
-       
-        img_hidden_states = img_hidden_states + gate_msa * img_attention_output  # (b,(t n),d)
-        text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output  # (b,n,d)
+
+        img_hidden_states = (
+            img_hidden_states + gate_msa * img_attention_output
+        )  # (b,(t n),d)
+        text_hidden_states = (
+            text_hidden_states + text_gate_msa * text_attention_output
+        )  # (b,n,d)
 
         # mlp (b,(t n),d)
         # layernorm
-        img_mlp_input = layer.post_attention_layernorm(img_hidden_states)  # vision (b,(t n),d)
-        text_mlp_input = layer.post_attention_layernorm(text_hidden_states)  # language (b,n,d)
-        
+        img_mlp_input = layer.post_attention_layernorm(
+            img_hidden_states
+        )  # vision (b,(t n),d)
+        text_mlp_input = layer.post_attention_layernorm(
+            text_hidden_states
+        )  # language (b,n,d)
+
         # mod (scale + shift)
         img_mlp_input = modulate(img_mlp_input, shift_mlp, scale_mlp)
         text_mlp_input = modulate(text_mlp_input, text_shift_mlp, text_scale_mlp)
-        
+
         # concat
-        mlp_input = torch.cat((text_mlp_input, img_mlp_input), dim=1)  # (b,(n_t+t*n_i),d
+        mlp_input = torch.cat(
+            (text_mlp_input, img_mlp_input), dim=1
+        )  # (b,(n_t+t*n_i),d
         mlp_output = layer.mlp(mlp_input, **kwargs)
-        
+
         # split
         img_mlp_output = mlp_output[:, text_length:]  # vision (b,(t n),d)
         text_mlp_output = mlp_output[:, :text_length]  # language (b,n,d)
-        
+
         # we use `pre`
         if self.transformer.layernorm_order == "sandwich":
             text_mlp_output = layer.fourth_layernorm(text_mlp_output)
             img_mlp_output = layer.fourth_layernorm(img_mlp_output)
 
         # gate + apply mlp
-        img_hidden_states = img_hidden_states + gate_mlp * img_mlp_output  # vision (b,(t n),d)
-        text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output  # language (b,n,d)
-        hidden_states = torch.cat((text_hidden_states, img_hidden_states), dim=1)  # (b,(n_t+t*n_i),d)
+        img_hidden_states = (
+            img_hidden_states + gate_mlp * img_mlp_output
+        )  # vision (b,(t n),d)
+        text_hidden_states = (
+            text_hidden_states + text_gate_mlp * text_mlp_output
+        )  # language (b,n,d)
+        hidden_states = torch.cat(
+            (text_hidden_states, img_hidden_states), dim=1
+        )  # (b,(n_t+t*n_i),d)
         return hidden_states
 
     def reinit(self, parent_model=None):
@@ -655,7 +739,9 @@ class DiffusionTransformer(BaseModel):
         self.out_channels = out_channels
         self.hidden_size = hidden_size
         self.model_channels = hidden_size
-        self.time_embed_dim = time_embed_dim if time_embed_dim is not None else hidden_size
+        self.time_embed_dim = (
+            time_embed_dim if time_embed_dim is not None else hidden_size
+        )
         self.num_classes = num_classes
         self.adm_in_channels = adm_in_channels
         self.input_time = input_time
@@ -682,7 +768,9 @@ class DiffusionTransformer(BaseModel):
         if use_RMSNorm:
             kwargs["layernorm"] = RMSNorm
         else:
-            kwargs["layernorm"] = partial(LayerNorm, elementwise_affine=elementwise_affine, eps=1e-6)
+            kwargs["layernorm"] = partial(
+                LayerNorm, elementwise_affine=elementwise_affine, eps=1e-6
+            )
 
         transformer_args.num_layers = num_layers
         transformer_args.hidden_size = hidden_size
@@ -695,7 +783,11 @@ class DiffusionTransformer(BaseModel):
 
         if use_SwiGLU:
             self.add_mixin(
-                "swiglu", SwiGLUMixin(num_layers, hidden_size, self.inner_hidden_size, bias=False), reinit=True
+                "swiglu",
+                SwiGLUMixin(
+                    num_layers, hidden_size, self.inner_hidden_size, bias=False
+                ),
+                reinit=True,
             )
 
     def _build_modules(self, module_configs):
@@ -745,7 +837,8 @@ class DiffusionTransformer(BaseModel):
                 pos_embed_config,
                 height=self.latent_height // self.patch_size,
                 width=self.latent_width // self.patch_size,
-                compressed_num_frames=(self.num_frames - 1) // self.time_compressed_rate + 1,
+                compressed_num_frames=(self.num_frames - 1) // self.time_compressed_rate
+                + 1,
                 hidden_size=self.hidden_size,
             ),
             reinit=True,
@@ -772,7 +865,9 @@ class DiffusionTransformer(BaseModel):
                     width=self.latent_width // self.patch_size,
                     hidden_size=self.hidden_size,
                     num_layers=self.num_layers,
-                    compressed_num_frames=(self.num_frames - 1) // self.time_compressed_rate + 1,
+                    compressed_num_frames=(self.num_frames - 1)
+                    // self.time_compressed_rate
+                    + 1,
                     hidden_size_head=self.hidden_size // self.num_attention_heads,
                     time_embed_dim=self.time_embed_dim,
                     elementwise_affine=self.elementwise_affine,
@@ -799,7 +894,11 @@ class DiffusionTransformer(BaseModel):
 
         if "lora_config" in module_configs:
             lora_config = module_configs["lora_config"]
-            self.add_mixin("lora", instantiate_from_config(lora_config, layer_num=self.num_layers), reinit=True)
+            self.add_mixin(
+                "lora",
+                instantiate_from_config(lora_config, layer_num=self.num_layers),
+                reinit=True,
+            )
 
         return
 
@@ -807,6 +906,7 @@ class DiffusionTransformer(BaseModel):
         b, t, d, h, w = x.shape
         if x.dtype != self.dtype:
             x = x.to(self.dtype)
+
         # This is not use in inference
         if "concat_images" in kwargs and kwargs["concat_images"] is not None:
             if kwargs["concat_images"].shape[0] != x.shape[0]:
@@ -815,12 +915,19 @@ class DiffusionTransformer(BaseModel):
                 concat_images = kwargs["concat_images"]
             x = torch.cat([x, concat_images], dim=2)
 
+        # we don't use class conditional functionality
         assert (y is not None) == (
             self.num_classes is not None
         ), "must specify y if and only if the model is class-conditional"
-        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False, dtype=self.dtype)
+
+        # calculate the timestep embedding
+        # [1, 512]
+        t_emb = timestep_embedding(
+            timesteps, self.model_channels, repeat_only=False, dtype=self.dtype
+        )
         emb = self.time_embed(t_emb)
 
+        # we don't use class conditional functionality
         if self.num_classes is not None:
             # assert y.shape[0] == x.shape[0]
             assert x.shape[0] % y.shape[0] == 0
@@ -834,6 +941,8 @@ class DiffusionTransformer(BaseModel):
         kwargs["text_length"] = context.shape[1]
 
         # HACK: hard-coded positional ids
-        kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
+        kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = (
+            torch.ones((1, 1)).to(x.dtype)
+        )
         output = super().forward(**kwargs)[0]
         return output
