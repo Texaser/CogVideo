@@ -1,5 +1,6 @@
 import os
 import argparse
+import imageio
 import yaml
 import torch
 import torch.distributed
@@ -68,6 +69,10 @@ def broad_cast_batch(batch):
 def forward_step_eval(
     data_iterator, model, args, timers, only_log_video_latents=False, data_class=None
 ):
+    
+    # TODO we appear to log the wrong video
+    # breakpoint()
+    
     if mpu.get_model_parallel_rank() == 0:
         timers("data loader").start()
         batch_video = next(data_iterator)
@@ -90,6 +95,8 @@ def forward_step_eval(
     else:
         batch_video = {"mp4": None, "fps": None, "num_frames": None, "txt": None}
     broad_cast_batch(batch_video)
+    
+    # log video on device 0
     if mpu.get_data_parallel_rank() == 0:
         log_video(
             batch_video, model, args, only_log_video_latents=only_log_video_latents
