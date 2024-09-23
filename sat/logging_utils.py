@@ -38,7 +38,6 @@ def draw_bbxs_on_frame(frame: np.ndarray, bbxs: np.ndarray) -> np.ndarray:
     
     for bbx in bbxs:
         
-        breakpoint()
         x1_norm, y1_norm, x2_norm, y2_norm = bbx
         
         # denormalize coordinates to pixel values
