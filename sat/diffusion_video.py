@@ -159,9 +159,6 @@ class SATVideoDiffusionEngine(nn.Module):
         # Only add Gaussian noise to frames after the first
         for b in range(B):
             for t in range(1, T):
-                # Initialize a per-frame mask
-                frame_mask = torch.zeros_like(image[b, :, t])
-
                 if noise_mode in ('bbox', 'both'):
                     # Process bounding boxes
                     bboxes = bbox_tensor[b, t]  # Shape: [N, 4]
@@ -207,8 +204,11 @@ class SATVideoDiffusionEngine(nn.Module):
                         # Generate noise scaled by the Gaussian mask
                         noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * gaussian.unsqueeze(0)
 
-                        # Add noise to the frame mask
-                        frame_mask[:, y1:y2, x1:x2] += noise
+                        # Add noise to the image in place
+                        image[b, :, t, y1:y2, x1:x2] += noise
+
+                        # Store the noise mask
+                        noise_masks[b, :, t, y1:y2, x1:x2] = noise
 
                 if noise_mode in ('pose', 'both'):
                     # Process pose keypoints
@@ -256,14 +256,11 @@ class SATVideoDiffusionEngine(nn.Module):
                             # Generate noise scaled by the Gaussian mask
                             noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * gaussian.unsqueeze(0)
 
-                            # Add noise to the frame mask
-                            frame_mask[:, y1:y2, x1:x2] += noise
+                            # Add noise to the image in place
+                            image[b, :, t, y1:y2, x1:x2] += noise
 
-                # Add the accumulated frame mask to the image
-                image[b, :, t] += frame_mask
-
-                # Store the noise mask
-                noise_masks[b, :, t] = frame_mask
+                            # Store the noise mask
+                            noise_masks[b, :, t, y1:y2, x1:x2] = noise
 
         return image, noise_masks
 
@@ -484,7 +481,7 @@ class SATVideoDiffusionEngine(nn.Module):
             # Encode the noised image
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
-            image = torch.concat([image, torch.zeros_like(z[:, 1:])], dim=1)
+            
             c["concat"] = image
             uc["concat"] = image
             samples = self.sample(c, shape=z.shape[1:], uc=uc, batch_size=N, **sampling_kwargs)

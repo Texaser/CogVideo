@@ -7,11 +7,11 @@ args:
   no_load_rng: True
   train_iters: 10000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
-  eval_interval: 10
+  eval_interval: 500
   eval_batch_size: 1
   save: ckpts_5b_lora
   save_interval: 1000
-  log_interval: 10
+  log_interval: 20
   train_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Train data path
   valid_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
