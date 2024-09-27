@@ -373,15 +373,18 @@ class SFTDataset(Dataset):
         self.video_paths = []
         self.captions = []
         self.tracklets = []
+        self.pose_tracklets = []  # New list to store pose tracklets
 
         start_time = time.time()
         
         total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
-                        for filename in filenames if filename.endswith(".json"))
+                          for filename in filenames if filename.endswith(".json"))
 
         with tqdm(total=total_files, desc="Loading Data") as pbar:
             for root, dirnames, filenames in os.walk(data_dir):
                 for filename in filenames:
+                    if (len(self.video_paths) >= 10):
+                        break
                     if filename.endswith(".json"):
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
@@ -393,7 +396,9 @@ class SFTDataset(Dataset):
                         self.captions.append(caption)
 
                         bounding_boxes = data['bounding_boxes']
-                        self.tracklets.append(self.encode_bbox_tracklet(bounding_boxes))
+                        trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
+                        self.tracklets.append(trajectory_data)
+                        self.pose_tracklets.append(keypoints_data)  # Store the pose data
 
                         pbar.update(1)
 
@@ -421,32 +426,7 @@ class SFTDataset(Dataset):
         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
         tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]
-        # else:
-        #     if ori_vlen > self.max_num_frames:
-        #         num_frames = self.max_num_frames
-        #         start = int(self.skip_frms_num)
-        #         end = int(ori_vlen - self.skip_frms_num)
-        #         indices = np.arange(start, end, max((end - start) // num_frames, 1)).astype(int)
-        #         temp_frms = vr.get_batch(np.arange(start, end))
-        #         assert temp_frms is not None
-        #         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
-        #         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-        #     else:
-
-        #         def nearest_smaller_4k_plus_1(n):
-        #             remainder = n % 4
-        #             if remainder == 0:
-        #                 return n - 3
-        #             else:
-        #                 return n - remainder + 1
-
-        #         start = int(self.skip_frms_num)
-        #         end = int(ori_vlen - self.skip_frms_num)
-        #         num_frames = nearest_smaller_4k_plus_1(end - start)  # 3D VAE requires the number of frames to be 4k+1
-        #         end = int(start + num_frames)
-        #         temp_frms = vr.get_batch(np.arange(start, end))
-        #         assert temp_frms is not None
-        #         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
+        pose_frms = self.pose_tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]  # Get pose data
 
         tensor_frms = pad_last_frame(
             tensor_frms, self.max_num_frames
@@ -457,9 +437,11 @@ class SFTDataset(Dataset):
         )
         tensor_frms = (tensor_frms - 127.5) / 127.5
         tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
+        pose_frms = self.adjust_keypoints(pose_frms, scale, top, left, orig_w, orig_h)  # Adjust keypoints
         item = {
             "mp4": tensor_frms,
             "bbox": tracklet_frms,
+            "pose": pose_frms,  # Include pose data in the item
             "txt": self.captions[index],
             "num_frames": num_frames,
             "fps": self.fps,
@@ -490,20 +472,54 @@ class SFTDataset(Dataset):
         bounding_boxes = bounding_boxes.clip(0, 1)
 
         return bounding_boxes
-        
+
+    def adjust_keypoints(self, keypoints, scale, top, left, orig_w, orig_h):
+        # Convert normalized coordinates to pixel coordinates in the original frame
+        keypoints[:, :, :, 0] *= orig_w  # x
+        keypoints[:, :, :, 1] *= orig_h  # y
+
+        # Apply scaling
+        keypoints *= scale
+
+        # Apply cropping offsets
+        keypoints[:, :, :, 0] -= left
+        keypoints[:, :, :, 1] -= top
+
+        # Convert back to normalized coordinates in the new frame size
+        keypoints[:, :, :, 0] /= self.video_size[1]  # x
+        keypoints[:, :, :, 1] /= self.video_size[0]  # y
+
+        # Clip values to [0, 1]
+        keypoints = keypoints.clamp(0, 1)
+
+        return keypoints
+
     def encode_bbox_tracklet(self, bounding_boxes):
         num_frames = len(bounding_boxes)
         num_players = 10
-        
+        num_keypoints = 17
+
         trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
-        
+        keypoints_data = [[[[0, 0] for _ in range(num_keypoints)] for _ in range(num_players)] for _ in range(num_frames)]
+
         for frame_idx, frame in enumerate(bounding_boxes):
             assert len(frame['bounding_box_instances']) == num_players
             for player_idx, box in enumerate(frame['bounding_box_instances']):
-                if box is not None:  # TODO: handle in data
+                if box is not None:
                     trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
-        # TODO: handle type
-        return torch.tensor(trajectory_data, dtype=torch.float16)
+                    if 'keypoints' in box and box['keypoints']:
+                        keypoints = box['keypoints']
+                        if len(keypoints) == 0:
+                            # pad with zeros
+                            keypoints_xy = [[0, 0] for _ in range(num_keypoints)]
+                        else:
+                            keypoints_xy = [[kp[0], kp[1]] for kp in keypoints]
+                        keypoints_data[frame_idx][player_idx] = keypoints_xy
+
+        # Convert to tensors
+        trajectory_data = torch.tensor(trajectory_data, dtype=torch.float16)
+        keypoints_data = torch.tensor(keypoints_data, dtype=torch.float16)
+        return trajectory_data, keypoints_data
 
     def __len__(self):
         return len(self.video_paths)

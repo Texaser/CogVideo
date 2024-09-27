@@ -4,6 +4,7 @@ model:
   latent_input: false
   noised_image_input: true
   noised_image_dropout: 0.05
+  noise_mode: 'bbox' # bbox, pose, or both
   not_trainable_prefixes: ['all'] ## Using Lora
   log_keys:
     - txt
