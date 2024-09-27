@@ -1,15 +1,15 @@
 args:
   checkpoint_activations: True # using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 5b-full-i2v
+  experiment_name: test
   mode: finetune
   load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
   no_load_rng: True
   train_iters: 10000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
-  eval_interval: 1000
+  eval_interval: 500
   eval_batch_size: 1
-  save: ckpts_5b_full
+  save: test
   save_interval: 1000
   log_interval: 20
   train_data: [ "/mnt/mir/fan23j/data/hq-traj" ] # Train data path
