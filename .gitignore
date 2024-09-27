@@ -8,3 +8,7 @@ logs/
 .idea
 output*
 test*
+sat/ckpts_*
+sat/slurm-*
+sat/wandb/
+pretrained/

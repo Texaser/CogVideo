@@ -1,7 +1,7 @@
 args:
   checkpoint_activations: True # using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 5b-lora-i2v-pose
+  experiment_name: 5b-full-i2v-pose
   mode: finetune
   load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
   no_load_rng: True
@@ -9,7 +9,7 @@ args:
   eval_iters: 1
   eval_interval: 500
   eval_batch_size: 1
-  save: ckpts_5b_lora
+  save: ckpts_5b_full
   save_interval: 1000
   log_interval: 20
   train_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Train data path
@@ -55,7 +55,7 @@ deepspeed:
   optimizer:
     type: sat.ops.FusedEmaAdam
     params:
-      lr: 5e-4 # Between 1E-3 and 5E-4 For Lora and 1E-5 For SFT
+      lr: 1e-5 # Between 1E-3 and 5E-4 For Lora and 1E-5 For SFT
       betas: [ 0.9, 0.95 ]
       eps: 1e-8
       weight_decay: 1e-4
