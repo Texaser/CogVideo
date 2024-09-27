@@ -5,11 +5,11 @@
 #SBATCH --cpus-per-task=16      
 #SBATCH --gres=gpu:3 # TODO: ensure this var matches the # GPUs you need
 #SBATCH --time=1000:00:00
+#SBATCH --output=./slurm_output/slurm-%j.out  # Add this line
 
 set -e  # exit script if any command fails
 
 cd /mnt/mir/fan23j/CogVideo/sat
-
 
 # find this path using `which conda`
 CONDA_PATH="/home/fan23j/anaconda3/"

@@ -12,3 +12,4 @@ sat/ckpts_*
 sat/slurm-*
 sat/wandb/
 pretrained/
+sat/slurm_output/

@@ -58,6 +58,7 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noised_image_input = model_config.get("noised_image_input", False)
         self.noised_image_all_concat = model_config.get("noised_image_all_concat", False)
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
+        self.noise_last_frame = model_config.get("noise_last_frame", False)
 
         # Add noise_mode configuration option
         self.noise_mode = model_config.get('noise_mode', 'pose')  # 'bbox', 'pose', or 'both'
@@ -136,14 +137,14 @@ class SATVideoDiffusionEngine(nn.Module):
         loss_dict = {"loss": loss_mean}
         return loss_mean, loss_dict
 
-    def add_noise_to_first_frame(self, image):
+    def add_noise_to_frame(self, image):
         sigma = torch.normal(mean=-3.0, std=0.5, size=(image.shape[0],)).to(self.device)
         sigma = torch.exp(sigma).to(image.dtype)
         image_noise = torch.randn_like(image) * sigma[:, None, None, None, None]
         image = image + image_noise
         return image
 
-    def add_noise_to_frames(self, image, bbox_tensor, pose_tensor, noise_mode='bbox'):
+    def add_noised_conditions_to_frames(self, image, bbox_tensor, pose_tensor, noise_mode='bbox'):
         """
         Injects Gaussian noise into each frame of the image based on the bounding boxes and/or pose keypoints,
         excluding the first frame which retains the reference image with added noise.
@@ -276,26 +277,32 @@ class SATVideoDiffusionEngine(nn.Module):
 
         if self.noised_image_input:
             image = x[:, :, 0:1]
-            image = self.add_noise_to_first_frame(image)
+            image = self.add_noise_to_frame(image)
             num_frames = batch['bbox'].shape[1]
-            subsequent_frames = torch.zeros(
-                (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
-                device=image.device,
-                dtype=image.dtype
-            )
-            image = torch.cat([image, subsequent_frames], dim=2)
+
+            if self.noise_last_frame:
+                last_frame = self.add_noise_to_frame(x[:, :, -1:])
+                subsequent_frames = torch.zeros(
+                    (image.shape[0], image.shape[1], num_frames - 2, image.shape[3], image.shape[4]),
+                    device=image.device,
+                    dtype=image.dtype
+                )
+                image = torch.cat([image, subsequent_frames, last_frame], dim=2)
+            else:
+                subsequent_frames = torch.zeros(
+                    (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
+                    device=image.device,
+                    dtype=image.dtype
+                )
+                image = torch.cat([image, subsequent_frames], dim=2)
+
             # Add noise based on the selected noise_mode
-            image, noise_masks = self.add_noise_to_frames(
+            image, noise_masks = self.add_noised_conditions_to_frames(
                 image, batch['bbox'], batch['pose'], noise_mode=self.noise_mode
             )
 
             # Encode the noised image
             image = self.encode_first_stage(image, batch)
-            #image = image.permute(0, 2, 1, 3, 4).contiguous()
-
-            # if random.random() < self.noised_image_dropout:
-            #     image = torch.zeros_like(image)
-            # batch["concat_images"] = image
 
         x = self.encode_first_stage(x, batch)
         x = x.permute(0, 2, 1, 3, 4).contiguous()
@@ -465,16 +472,25 @@ class SATVideoDiffusionEngine(nn.Module):
 
         if self.noised_image_input:
             image = x[:, :, 0:1]
-            image = self.add_noise_to_first_frame(image)
+            image = self.add_noise_to_frame(image)
             num_frames = batch['bbox'].shape[1]
-            subsequent_frames = torch.zeros(
-                (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
-                device=image.device,
-                dtype=image.dtype
-            )
-            image = torch.cat([image, subsequent_frames], dim=2)
+            if self.noise_last_frame:
+                last_frame = self.add_noise_to_frame(x[:, :, -1:])
+                subsequent_frames = torch.zeros(
+                    (image.shape[0], image.shape[1], num_frames - 2, image.shape[3], image.shape[4]),
+                    device=image.device,
+                    dtype=image.dtype
+                )
+                image = torch.cat([image, subsequent_frames, last_frame], dim=2)
+            else:
+                subsequent_frames = torch.zeros(
+                    (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
+                    device=image.device,
+                    dtype=image.dtype
+                )
+                image = torch.cat([image, subsequent_frames], dim=2)
             # Add noise based on the selected noise_mode
-            image, noise_masks = self.add_noise_to_frames(
+            image, noise_masks = self.add_noised_conditions_to_frames(
                 image, batch['bbox'], batch['pose'], noise_mode=self.noise_mode
             )
 
@@ -492,9 +508,14 @@ class SATVideoDiffusionEngine(nn.Module):
             else:
                 samples = self.decode_first_stage(samples).to(torch.float32)
                 samples = samples.permute(0, 2, 1, 3, 4).contiguous()
-                # Draw bounding boxes and poses on the decoded samples
-                samples_with_annotations = self.draw_annotations(samples, batch)
-                log["samples"] = samples_with_annotations  # Store the annotated samples
+                # Store the raw samples
+                log["samples_raw"] = samples.clone()
+                # Draw bounding boxes on the samples
+                samples_with_bbox = self.draw_annotations(samples.clone(), batch, draw_bbox=True, draw_pose=False)
+                log["samples_bbox"] = samples_with_bbox
+                # Draw pose keypoints on the samples
+                samples_with_pose = self.draw_annotations(samples.clone(), batch, draw_bbox=False, draw_pose=True)
+                log["samples_pose"] = samples_with_pose
         else:
             samples = self.sample(c, shape=z.shape[1:], uc=uc, batch_size=N, **sampling_kwargs)
             samples = samples.permute(0, 2, 1, 3, 4).contiguous()
@@ -504,18 +525,25 @@ class SATVideoDiffusionEngine(nn.Module):
             else:
                 samples = self.decode_first_stage(samples).to(torch.float32)
                 samples = samples.permute(0, 2, 1, 3, 4).contiguous()
-                # Draw bounding boxes and poses on the decoded samples
-                samples_with_annotations = self.draw_annotations(samples, batch)
-                log["samples"] = samples_with_annotations  # Store the annotated samples
+                # Store the raw samples
+                log["samples_raw"] = samples.clone()
+                # Draw bounding boxes on the samples
+                samples_with_bbox = self.draw_annotations(samples.clone(), batch, draw_bbox=True, draw_pose=False)
+                log["samples_bbox"] = samples_with_bbox
+                # Draw pose keypoints on the samples
+                samples_with_pose = self.draw_annotations(samples.clone(), batch, draw_bbox=False, draw_pose=True)
+                log["samples_pose"] = samples_with_pose
         return log
     
-    def draw_annotations(self, samples, batch):
+    def draw_annotations(self, samples, batch, draw_bbox=True, draw_pose=True):
         """
-        Draws bounding boxes and pose annotations on the decoded video samples.
+        Draws bounding boxes and/or pose annotations on the decoded video samples.
 
         Args:
             samples (Tensor): Decoded video samples of shape [B, T, C, H, W].
             batch (Dict): Batch dictionary containing 'bbox' and 'pose'.
+            draw_bbox (bool): Whether to draw bounding boxes.
+            draw_pose (bool): Whether to draw pose keypoints.
 
         Returns:
             Tensor: Video samples with annotations drawn, same shape as input samples.
@@ -536,42 +564,44 @@ class SATVideoDiffusionEngine(nn.Module):
                 # Convert from RGB to BGR for OpenCV
                 frame_np = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
 
-                # Get bounding boxes
-                bboxes = batch['bbox'][b, t]  # Shape: [N, 4]
-                for n in range(N):
-                    bbox = bboxes[n]  # [4]
-                    x1_norm, y1_norm, x2_norm, y2_norm = bbox.cpu().numpy()
-                    # Skip invalid bounding boxes
-                    if (x1_norm == x2_norm) and (y1_norm == y2_norm):
-                        continue
-                    x1 = int(x1_norm * W)
-                    y1 = int(y1_norm * H)
-                    x2 = int(x2_norm * W)
-                    y2 = int(y2_norm * H)
-                    # Ensure coordinates are within image bounds
-                    x1 = max(0, min(W - 1, x1))
-                    y1 = max(0, min(H - 1, y1))
-                    x2 = max(0, min(W - 1, x2))
-                    y2 = max(0, min(H - 1, y2))
-                    # Draw rectangle on frame_np
-                    cv2.rectangle(frame_np, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
-
-                # Get poses
-                poses = batch['pose'][b, t]  # Shape: [N, K, 2]
-                for n in range(N):
-                    keypoints = poses[n]  # Shape: [K, 2]
-                    for k in range(K):
-                        x_norm, y_norm = keypoints[k].cpu().numpy()
-                        # Skip invalid keypoints
-                        if x_norm == 0 and y_norm == 0:
+                if draw_bbox:
+                    # Get bounding boxes
+                    bboxes = batch['bbox'][b, t]  # Shape: [N, 4]
+                    for n in range(N):
+                        bbox = bboxes[n]  # [4]
+                        x1_norm, y1_norm, x2_norm, y2_norm = bbox.cpu().numpy()
+                        # Skip invalid bounding boxes
+                        if (x1_norm == x2_norm) and (y1_norm == y2_norm):
                             continue
-                        x = int(x_norm * W)
-                        y = int(y_norm * H)
+                        x1 = int(x1_norm * W)
+                        y1 = int(y1_norm * H)
+                        x2 = int(x2_norm * W)
+                        y2 = int(y2_norm * H)
                         # Ensure coordinates are within image bounds
-                        x = max(0, min(W - 1, x))
-                        y = max(0, min(H - 1, y))
-                        # Draw circle on frame_np
-                        cv2.circle(frame_np, (x, y), radius=3, color=(0, 0, 255), thickness=-1)
+                        x1 = max(0, min(W - 1, x1))
+                        y1 = max(0, min(H - 1, y1))
+                        x2 = max(0, min(W - 1, x2))
+                        y2 = max(0, min(H - 1, y2))
+                        # Draw rectangle on frame_np
+                        cv2.rectangle(frame_np, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
+
+                if draw_pose:
+                    # Get poses
+                    poses = batch['pose'][b, t]  # Shape: [N, K, 2]
+                    for n in range(N):
+                        keypoints = poses[n]  # Shape: [K, 2]
+                        for k in range(K):
+                            x_norm, y_norm = keypoints[k].cpu().numpy()
+                            # Skip invalid keypoints
+                            if x_norm == 0 and y_norm == 0:
+                                continue
+                            x = int(x_norm * W)
+                            y = int(y_norm * H)
+                            # Ensure coordinates are within image bounds
+                            x = max(0, min(W - 1, x))
+                            y = max(0, min(H - 1, y))
+                            # Draw circle on frame_np
+                            cv2.circle(frame_np, (x, y), radius=3, color=(0, 0, 255), thickness=-1)
 
                 # Convert from BGR back to RGB
                 frame_np = cv2.cvtColor(frame_np, cv2.COLOR_BGR2RGB)
