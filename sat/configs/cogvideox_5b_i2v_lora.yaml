@@ -5,7 +5,7 @@ model:
   noised_image_input: true
   noised_image_dropout: 0.05
   noise_last_frame: true
-  noise_mode: 'pose' # bbox, pose, or both
+  noise_mode: 'both' # bbox, pose, or both
   not_trainable_prefixes: ['all'] ## Using Lora
   log_keys:
     - txt
