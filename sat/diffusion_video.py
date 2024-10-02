@@ -59,6 +59,8 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noised_image_all_concat = model_config.get("noised_image_all_concat", False)
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
         self.noise_last_frame = model_config.get("noise_last_frame", False)
+        self.joint_encodings = model_config.get("joint_encodings", None)
+        self.player_encodings = model_config.get("player_encodings", None)
 
         # Add noise_mode configuration option
         self.noise_mode = model_config.get('noise_mode', 'pose')  # 'bbox', 'pose', or 'both'
@@ -144,6 +146,46 @@ class SATVideoDiffusionEngine(nn.Module):
         image = image + image_noise
         return image
 
+    def write_noise_masks(self, noise_masks, output_dir='noise_masks', prefix=''):
+        """
+        Writes noise masks to image files.
+
+        Args:
+        noise_masks (torch.Tensor): Tensor of shape [B, C, T, H, W] containing noise masks.
+        output_dir (str): Directory to save the noise mask images.
+        prefix (str): Prefix for the saved filenames.
+
+        Returns:
+        None
+        """
+        B, C, T, H, W = noise_masks.shape
+
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+
+        for b in range(B):
+            for t in range(T):
+                # Extract single noise mask
+                noise_mask = noise_masks[b, :, t]
+
+                noise_mask = noise_mask.float()
+
+                # Convert to numpy array and scale to 0-255 range
+                noise_mask_np = (noise_mask.permute(1, 2, 0).cpu().numpy()).astype(np.uint8)
+
+                # If the noise mask is single-channel, repeat it to create an RGB image
+                if C == 1:
+                    noise_mask_np = np.repeat(noise_mask_np, 3, axis=2)
+
+                # Create filename
+                filename = f'{prefix}batch_{b}_frame_{t}.png'
+                filepath = os.path.join(output_dir, filename)
+
+                # Save the noise mask as an image
+                cv2.imwrite(filepath, cv2.cvtColor(noise_mask_np, cv2.COLOR_RGB2BGR))
+
+        print(f"Noise masks saved in {output_dir}")
+
     def add_noised_conditions_to_frames(self, image, bbox_tensor, pose_tensor, noise_mode='bbox'):
         """
         Injects Gaussian noise into each frame of the image based on the bounding boxes and/or pose keypoints,
@@ -156,6 +198,14 @@ class SATVideoDiffusionEngine(nn.Module):
 
         # Initialize a tensor to store noise masks
         noise_masks = torch.zeros_like(image)
+
+        # Initialize joint encodings
+        if self.joint_encodings is not None:
+            joint_encodings = torch.tensor(self.joint_encodings, device=image.device, dtype=image.dtype)
+
+        # Initialize player encodings
+        if self.player_encodings is not None:
+            player_encodings = torch.tensor(self.player_encodings, device=image.device, dtype=image.dtype)
 
         # Only add Gaussian noise to frames after the first
         for b in range(B):
@@ -202,8 +252,15 @@ class SATVideoDiffusionEngine(nn.Module):
                         gaussian = gaussian / gaussian.max()
                         gaussian = gaussian.to(image.dtype)
 
-                        # Generate noise scaled by the Gaussian mask
-                        noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * gaussian.unsqueeze(0)
+                        # Apply player-specific encoding if available
+                        if self.player_encodings is not None:
+                            player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
+                            encoded_gaussian = gaussian.unsqueeze(0) * player_encoding
+                        else:
+                            encoded_gaussian = gaussian.unsqueeze(0)
+
+                        # Generate noise scaled by the encoded Gaussian mask
+                        noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
 
                         # Add noise to the image in place
                         image[b, :, t, y1:y2, x1:x2] += noise
@@ -254,15 +311,29 @@ class SATVideoDiffusionEngine(nn.Module):
                             gaussian = gaussian / gaussian.max()
                             gaussian = gaussian.to(image.dtype)
 
-                            # Generate noise scaled by the Gaussian mask
-                            noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * gaussian.unsqueeze(0)
+                            # Apply joint and player-specific encodings if available
+                            if self.joint_encodings is not None and self.player_encodings is not None:
+                                joint_encoding = joint_encodings[k].unsqueeze(-1).unsqueeze(-1)
+                                player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
+                                encoded_gaussian = gaussian.unsqueeze(0) * joint_encoding * player_encoding
+                            elif self.joint_encodings is not None:
+                                joint_encoding = joint_encodings[k].unsqueeze(-1).unsqueeze(-1)
+                                encoded_gaussian = gaussian.unsqueeze(0) * joint_encoding
+                            elif self.player_encodings is not None:
+                                player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
+                                encoded_gaussian = gaussian.unsqueeze(0) * player_encoding
+                            else:
+                                encoded_gaussian = gaussian.unsqueeze(0)
+
+                            # Generate noise scaled by the encoded Gaussian mask
+                            noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
 
                             # Add noise to the image in place
                             image[b, :, t, y1:y2, x1:x2] += noise
 
                             # Store the noise mask
                             noise_masks[b, :, t, y1:y2, x1:x2] = noise
-
+        #self.write_noise_masks(noise_masks)
         return image, noise_masks
 
     def shared_step(self, batch: Dict) -> Any:

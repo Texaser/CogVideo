@@ -5,8 +5,39 @@ model:
   noised_image_input: true
   noised_image_dropout: 0.05
   noise_last_frame: true
-  noise_mode: 'both' # bbox, pose, or both
+  noise_mode: 'pose' # bbox, pose, or both
   not_trainable_prefixes: ['all'] ## Using Lora
+  # joint_encodings: [
+  #       [1, 0, 0],  # Nose
+  #       [0, 1, 0],  # Left Eye
+  #       [0, 0, 1],  # Right Eye
+  #       [1, 1, 0],  # Left Ear
+  #       [1, 0, 1],  # Right Ear
+  #       [0, 1, 1],  # Left Shoulder
+  #       [1, 1, 1],  # Right Shoulder
+  #       [1, 0.5, 0],  # Left Elbow
+  #       [0, 0.5, 1],  # Right Elbow
+  #       [0.5, 1, 0.5],  # Left Wrist
+  #       [0.5, 0, 0.5],  # Right Wrist
+  #       [1, 0.7, 0.3],  # Left Hip
+  #       [0.3, 0.7, 1],  # Right Hip
+  #       [0.7, 1, 0.7],  # Left Knee
+  #       [0.7, 0.7, 1],  # Right Knee
+  #       [0.5, 0.5, 1],  # Left Ankle
+  #       [1, 0.5, 0.5]   # Right Ankle
+  #   ]
+  player_encodings: [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [1, 1, 0], 
+      [1, 0, 1], 
+      [0, 1, 1],
+      [1, 1, 1], 
+      [1, 0.5, 0],
+      [0, 0.5, 1],
+      [0.5, 1, 0.5],
+    ]
   log_keys:
     - txt
 
