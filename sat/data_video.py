@@ -374,7 +374,7 @@ class SFTDataset(Dataset):
         self.captions = []
         self.tracklets = []
         self.pose_tracklets = []  # New list to store pose tracklets
-
+        # self.json_folders = []
         start_time = time.time()
         
         total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
@@ -386,6 +386,9 @@ class SFTDataset(Dataset):
                     if filename.endswith(".json"):
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
+
+                        # self.json_folders.append(root)
+                        # os.mkdir(json_folder)
                         # TODO: fix path in annotations
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)
@@ -399,7 +402,7 @@ class SFTDataset(Dataset):
                         self.pose_tracklets.append(keypoints_data)  # Store the pose data
 
                         pbar.update(1)
-
+        # import pudb; pudb.set_trace();
         end_time = time.time()
         loading_time = end_time - start_time
         print(f"\nData loading completed in {loading_time:.2f} seconds.")
@@ -436,6 +439,11 @@ class SFTDataset(Dataset):
         tensor_frms = (tensor_frms - 127.5) / 127.5
         tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
         pose_frms = self.adjust_keypoints(pose_frms, scale, top, left, orig_w, orig_h)  # Adjust keypoints
+
+        #save tensor
+        # torch.save(tensor_frms, os.path.join(self.json_folders[index], 'frames.pth'))
+        # torch.save(tracklet_frms, os.path.join(self.json_folders[index], 'bbox.pth'))
+        # torch.save(pose_frms, os.path.join(self.json_folders[index], 'pose.pth'))
         item = {
             "mp4": tensor_frms,
             "bbox": tracklet_frms,

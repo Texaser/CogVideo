@@ -12,8 +12,8 @@ args:
   save: ckpts_5b_full
   save_interval: 1000
   log_interval: 20
-  train_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Train data path
-  valid_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Validation data path, can be the same as train_data(not recommended)
+  train_data: [ "/mnt/bum/hanyi/data/hq-evaluation" ] # Train data path
+  valid_data: [ "/mnt/bum/hanyi/data/hq-evaluation" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
   num_workers: 8
   force_train: True

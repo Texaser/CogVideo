@@ -120,7 +120,8 @@ def sampling_main(args, model_cls):
     else:
         model = model_cls
 
-    load_checkpoint(model, args)
+    load_checkpoint(model, args, specific_iteration=1000)
+    # load_checkpoint(model, args)
     model.eval()
 
     if args.input_type == "cli":
