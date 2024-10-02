@@ -12,3 +12,18 @@ sat/ckpts_*
 sat/slurm-*
 sat/wandb/
 pretrained/
+329956791_rebound_44.265_0.json
+CogVideoX-2b/
+filtered-clips-annotations
+filtered-clips-annotations-200-frames
+inference/A basketball player grabbing a rebound.mp4
+inference/A basketball player making a free throw.mp4
+inference/A basketball player making a three-point shot.mp4
+sat/329940096_1+_963.677_0.mp4
+sat/329956791_rebound_44.265_0.mp4
+sat/CogVideoX-2b-sat/
+sat/CogVideoX-5b-sat/
+sat/KING/
+sat/results/
+sat/sgm/models/networks/
+sat/t5-v1_1-xxl/
