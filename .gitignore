@@ -27,3 +27,6 @@ sat/KING/
 sat/results/
 sat/sgm/models/networks/
 sat/t5-v1_1-xxl/
+sat/evaluation_results/
+sat/gt_evaluation_results/
+sat/vis_results/

@@ -1,12 +1,12 @@
-A basketball player missing a three-point shot@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/324110350_3-_570.345_0_sample.jpg
-A basketball player missing a three-point shot@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/326733686_3-_151.651_0_sample.jpg
-A basketball player missing a three-point shot@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/328534953_3-_213.606_0_sample.jpg
-A basketball player grabbing a rebound@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/328584580_rebound_79.333_0_sample.jpg
-A basketball player grabbing a rebound@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/329501325_rebound_822.486_0_sample.jpg
-A basketball player grabbing a rebound@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/338586845_rebound_562.872_0_sample.jpg
-A basketball player making a free throw@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/328839859_1+_1909.296_0_sample.jpg
-A basketball player making a free throw@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/329573394_1+_1045.251_0_sample.jpg
-A basketball player making a free throw@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/329924656_1+_1551.444_0_sample.jpg
-A basketball player making a two-point shot@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/325253880_2+_195.809_0_sample.jpg
-A basketball player making a two-point shot@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/328250875_2+_97.95_0_sample.jpg
-A basketball player making a two-point shot@@/mnt/bum/hanyi/data/hq-evaluation/evaluation_first_image/333272025_2+_35.757_0_sample.jpg
+A basketball player missing a three-point shot@@/mnt/bum/hanyi/data/hq-evaluation/three_pointer_missed/324110350_3-_570.345_0/324110350_3-_570.345_0_sample_first.jpg
+A basketball player missing a three-point shot@@/mnt/bum/hanyi/data/hq-evaluation/three_pointer_missed/326733686_3-_151.651_0/326733686_3-_151.651_0_sample_first.jpg
+A basketball player missing a three-point shot@@/mnt/bum/hanyi/data/hq-evaluation/three_pointer_missed/328534953_3-_213.606_0/328534953_3-_213.606_0_sample_first.jpg
+A basketball player grabbing a rebound@@/mnt/bum/hanyi/data/hq-evaluation/rebound/328584580_rebound_79.333_0/328584580_rebound_79.333_0_sample_first.jpg
+A basketball player grabbing a rebound@@/mnt/bum/hanyi/data/hq-evaluation/rebound/329501325_rebound_822.486_0/329501325_rebound_822.486_0_sample_first.jpg
+A basketball player grabbing a rebound@@/mnt/bum/hanyi/data/hq-evaluation/rebound/338586845_rebound_562.872_0/338586845_rebound_562.872_0_sample_first.jpg
+A basketball player making a free throw@@/mnt/bum/hanyi/data/hq-evaluation/free_throw_made/328839859_1+_1909.296_0/328839859_1+_1909.296_0_sample_first.jpg
+A basketball player making a free throw@@/mnt/bum/hanyi/data/hq-evaluation/free_throw_made/329573394_1+_1045.251_0/329573394_1+_1045.251_0_sample_first.jpg
+A basketball player making a free throw@@/mnt/bum/hanyi/data/hq-evaluation/free_throw_made/329924656_1+_1551.444_0/329924656_1+_1551.444_0_sample_first.jpg
+A basketball player making a two-point shot@@/mnt/bum/hanyi/data/hq-evaluation/two_pointer_made/325253880_2+_195.809_0/325253880_2+_195.809_0_sample_first.jpg
+A basketball player making a two-point shot@@/mnt/bum/hanyi/data/hq-evaluation/two_pointer_made/328250875_2+_97.95_0/328250875_2+_97.95_0_sample_first.jpg
+A basketball player making a two-point shot@@/mnt/bum/hanyi/data/hq-evaluation/two_pointer_made/333272025_2+_35.757_0/333272025_2+_35.757_0_sample_first.jpg

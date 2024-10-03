@@ -1,4 +1,4 @@
-environs="CUDA_VISIBLE_DEVICES=4 WORLD_SIZE=1 RANK=0 LOCAL_RANK=0 LOCAL_WORLD_SIZE=1"
+environs="CUDA_VISIBLE_DEVICES=6 WORLD_SIZE=1 RANK=0 LOCAL_RANK=0 LOCAL_WORLD_SIZE=1"
 
 run_cmd="$environs python sample_video.py --base configs/cogvideox_5b_i2v_lora.yaml configs/inference.yaml --seed $RANDOM"
 
