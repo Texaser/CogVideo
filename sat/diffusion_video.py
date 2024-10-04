@@ -21,7 +21,8 @@ from sat import mpu
 from torchvision.utils import save_image
 import os
 import cv2
-import numpy as np 
+import numpy as np
+from sat.diffusion_utils import add_noised_pose_to_frames
 
 class SATVideoDiffusionEngine(nn.Module):
     def __init__(self, args, **kwargs):
@@ -146,196 +147,6 @@ class SATVideoDiffusionEngine(nn.Module):
         image = image + image_noise
         return image
 
-    def write_noise_masks(self, noise_masks, output_dir='noise_masks', prefix=''):
-        """
-        Writes noise masks to image files.
-
-        Args:
-        noise_masks (torch.Tensor): Tensor of shape [B, C, T, H, W] containing noise masks.
-        output_dir (str): Directory to save the noise mask images.
-        prefix (str): Prefix for the saved filenames.
-
-        Returns:
-        None
-        """
-        B, C, T, H, W = noise_masks.shape
-
-        # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
-
-        for b in range(B):
-            for t in range(T):
-                # Extract single noise mask
-                noise_mask = noise_masks[b, :, t]
-
-                noise_mask = noise_mask.float()
-
-                # Convert to numpy array and scale to 0-255 range
-                noise_mask_np = (noise_mask.permute(1, 2, 0).cpu().numpy()).astype(np.uint8)
-
-                # If the noise mask is single-channel, repeat it to create an RGB image
-                if C == 1:
-                    noise_mask_np = np.repeat(noise_mask_np, 3, axis=2)
-
-                # Create filename
-                filename = f'{prefix}batch_{b}_frame_{t}.png'
-                filepath = os.path.join(output_dir, filename)
-
-                # Save the noise mask as an image
-                cv2.imwrite(filepath, cv2.cvtColor(noise_mask_np, cv2.COLOR_RGB2BGR))
-
-        print(f"Noise masks saved in {output_dir}")
-
-    def add_noised_conditions_to_frames(self, image, bbox_tensor, pose_tensor, noise_mode='bbox'):
-        """
-        Injects Gaussian noise into each frame of the image based on the bounding boxes and/or pose keypoints,
-        excluding the first frame which retains the reference image with added noise.
-        Returns the modified image and the noise masks for visualization.
-        """
-        B, C, T, H, W = image.shape  # Assuming image shape is [B, C, T, H, W]
-        _, _, N, _ = bbox_tensor.shape  # N is the number of bounding boxes per frame
-        _, _, _, K, _ = pose_tensor.shape  # K is the number of keypoints per player
-
-        # Initialize a tensor to store noise masks
-        noise_masks = torch.zeros_like(image)
-
-        # Initialize joint encodings
-        if self.joint_encodings is not None:
-            joint_encodings = torch.tensor(self.joint_encodings, device=image.device, dtype=image.dtype)
-
-        # Initialize player encodings
-        if self.player_encodings is not None:
-            player_encodings = torch.tensor(self.player_encodings, device=image.device, dtype=image.dtype)
-
-        # Only add Gaussian noise to frames after the first
-        for b in range(B):
-            for t in range(1, T):
-                if noise_mode in ('bbox', 'both'):
-                    # Process bounding boxes
-                    bboxes = bbox_tensor[b, t]  # Shape: [N, 4]
-                    for n in range(N):
-                        bbox = bboxes[n]
-                        x1_norm, y1_norm, x2_norm, y2_norm = bbox
-
-                        # Convert normalized coordinates to pixel coordinates
-                        x1 = x1_norm * W
-                        y1 = y1_norm * H
-                        x2 = x2_norm * W
-                        y2 = y2_norm * H
-
-                        # Ensure coordinates are in the correct order
-                        x1, x2 = sorted([x1.item(), x2.item()])
-                        y1, y2 = sorted([y1.item(), y2.item()])
-
-                        # Convert to integers and clamp
-                        x1 = int(max(0, min(W - 1, x1)))
-                        y1 = int(max(0, min(H - 1, y1)))
-                        x2 = int(max(x1 + 1, min(W, x2)))
-                        y2 = int(max(y1 + 1, min(H, y2)))
-
-                        h = y2 - y1
-                        w = x2 - x1
-
-                        if h <= 0 or w <= 0:
-                            continue  # Skip invalid bounding boxes
-
-                        # Generate a Gaussian mask
-                        y_coords = torch.arange(h, device=image.device).unsqueeze(1).repeat(1, w)
-                        x_coords = torch.arange(w, device=image.device).unsqueeze(0).repeat(h, 1)
-                        mx = (h - 1) / 2.0
-                        my = (w - 1) / 2.0
-                        sx = h / 3.0
-                        sy = w / 3.0
-                        gaussian = (1 / (2 * math.pi * sx * sy)) * torch.exp(
-                            -(((x_coords - my) ** 2) / (2 * sy ** 2) + ((y_coords - mx) ** 2) / (2 * sx ** 2))
-                        )
-                        gaussian = gaussian / gaussian.max()
-                        gaussian = gaussian.to(image.dtype)
-
-                        # Apply player-specific encoding if available
-                        if self.player_encodings is not None:
-                            player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
-                            encoded_gaussian = gaussian.unsqueeze(0) * player_encoding
-                        else:
-                            encoded_gaussian = gaussian.unsqueeze(0)
-
-                        # Generate noise scaled by the encoded Gaussian mask
-                        noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
-
-                        # Add noise to the image in place
-                        image[b, :, t, y1:y2, x1:x2] += noise
-
-                        # Store the noise mask
-                        noise_masks[b, :, t, y1:y2, x1:x2] = noise
-
-                if noise_mode in ('pose', 'both'):
-                    # Process pose keypoints
-                    keypoints = pose_tensor[b, t]  # Shape: [N, K, 2]
-                    for n in range(N):
-                        player_keypoints = keypoints[n]  # Shape: [K, 2]
-                        for k in range(K):
-                            x_norm, y_norm = player_keypoints[k]
-
-                            # Convert normalized coordinates to pixel coordinates
-                            x = x_norm * W
-                            y = y_norm * H
-
-                            # Skip invalid keypoints (e.g., zero coordinates)
-                            if x < 0 or x >= W or y < 0 or y >= H:
-                                continue
-
-                            x = int(torch.clamp(x, 0, W - 1).item())
-                            y = int(torch.clamp(y, 0, H - 1).item())
-
-                            # Define a small window around the keypoint
-                            window_size = 15  # Adjust this value as needed
-                            x1 = max(0, x - window_size // 2)
-                            y1 = max(0, y - window_size // 2)
-                            x2 = min(W, x + window_size // 2 + 1)
-                            y2 = min(H, y + window_size // 2 + 1)
-
-                            h = y2 - y1
-                            w = x2 - x1
-
-                            if h <= 0 or w <= 0:
-                                continue
-
-                            # Generate a Gaussian mask centered at the keypoint
-                            y_coords = torch.arange(y1, y2, device=image.device).unsqueeze(1).repeat(1, w) - y
-                            x_coords = torch.arange(x1, x2, device=image.device).unsqueeze(0).repeat(h, 1) - x
-                            sx = h / 3.0
-                            sy = w / 3.0
-                            gaussian = (1 / (2 * math.pi * sx * sy)) * torch.exp(
-                                -(((x_coords) ** 2) / (2 * sy ** 2) + ((y_coords) ** 2) / (2 * sx ** 2))
-                            )
-                            gaussian = gaussian / gaussian.max()
-                            gaussian = gaussian.to(image.dtype)
-
-                            # Apply joint and player-specific encodings if available
-                            if self.joint_encodings is not None and self.player_encodings is not None:
-                                joint_encoding = joint_encodings[k].unsqueeze(-1).unsqueeze(-1)
-                                player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
-                                encoded_gaussian = gaussian.unsqueeze(0) * joint_encoding * player_encoding
-                            elif self.joint_encodings is not None:
-                                joint_encoding = joint_encodings[k].unsqueeze(-1).unsqueeze(-1)
-                                encoded_gaussian = gaussian.unsqueeze(0) * joint_encoding
-                            elif self.player_encodings is not None:
-                                player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
-                                encoded_gaussian = gaussian.unsqueeze(0) * player_encoding
-                            else:
-                                encoded_gaussian = gaussian.unsqueeze(0)
-
-                            # Generate noise scaled by the encoded Gaussian mask
-                            noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
-
-                            # Add noise to the image in place
-                            image[b, :, t, y1:y2, x1:x2] += noise
-
-                            # Store the noise mask
-                            noise_masks[b, :, t, y1:y2, x1:x2] = noise
-        #self.write_noise_masks(noise_masks)
-        return image, noise_masks
-
     def shared_step(self, batch: Dict) -> Any:
         x = self.get_input(batch)
         if self.lr_scale is not None:
@@ -345,7 +156,6 @@ class SATVideoDiffusionEngine(nn.Module):
             batch["lr_input"] = lr_z
 
         x = x.permute(0, 2, 1, 3, 4).contiguous()
-
         if self.noised_image_input:
             image = x[:, :, 0:1]
             image = self.add_noise_to_frame(image)
@@ -368,8 +178,8 @@ class SATVideoDiffusionEngine(nn.Module):
                 image = torch.cat([image, subsequent_frames], dim=2)
 
             # Add noise based on the selected noise_mode
-            image, noise_masks = self.add_noised_conditions_to_frames(
-                image, batch['bbox'], batch['pose'], noise_mode=self.noise_mode
+            image, noise_masks = add_noised_pose_to_frames(
+                image, batch['bbox'], batch['pose'], noise_mode=self.noise_mode, joint_encodings=self.joint_encodings, player_encodings=self.player_encodings
             )
 
             # Encode the noised image

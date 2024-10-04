@@ -13,3 +13,5 @@ sat/slurm-*
 sat/wandb/
 pretrained/
 sat/slurm_output/
+sat/validation_guidance_maps/
+sat/noise_masks/

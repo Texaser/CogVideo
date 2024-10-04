@@ -477,7 +477,7 @@ class SFTDataset(Dataset):
         keypoints[:, :, :, 1] *= orig_h  # y
 
         # Apply scaling
-        keypoints *= scale
+        keypoints[:, :, :, :2] *= scale  # Only scale x and y, not confidence
 
         # Apply cropping offsets
         keypoints[:, :, :, 0] -= left
@@ -487,8 +487,8 @@ class SFTDataset(Dataset):
         keypoints[:, :, :, 0] /= self.video_size[1]  # x
         keypoints[:, :, :, 1] /= self.video_size[0]  # y
 
-        # Clip values to [0, 1]
-        keypoints = keypoints.clamp(0, 1)
+        # Clip values to [0, 1] for x and y coordinates
+        keypoints[:, :, :, :2] = keypoints[:, :, :, :2].clamp(0, 1)
 
         return keypoints
 
@@ -498,7 +498,7 @@ class SFTDataset(Dataset):
         num_keypoints = 17
 
         trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
-        keypoints_data = [[[[0, 0] for _ in range(num_keypoints)] for _ in range(num_players)] for _ in range(num_frames)]
+        keypoints_data = [[[[0, 0, 0] for _ in range(num_keypoints)] for _ in range(num_players)] for _ in range(num_frames)]
 
         for frame_idx, frame in enumerate(bounding_boxes):
             assert len(frame['bounding_box_instances']) == num_players
@@ -509,10 +509,10 @@ class SFTDataset(Dataset):
                         keypoints = box['keypoints']
                         if len(keypoints) == 0:
                             # pad with zeros
-                            keypoints_xy = [[0, 0] for _ in range(num_keypoints)]
+                            keypoints_xys = [[0, 0, 0] for _ in range(num_keypoints)]
                         else:
-                            keypoints_xy = [[kp[0], kp[1]] for kp in keypoints]
-                        keypoints_data[frame_idx][player_idx] = keypoints_xy
+                            keypoints_xys = [[kp[0], kp[1], kp[2]] for kp in keypoints]
+                        keypoints_data[frame_idx][player_idx] = keypoints_xys
 
         # Convert to tensors
         trajectory_data = torch.tensor(trajectory_data, dtype=torch.float16)
