@@ -23,6 +23,8 @@ try:
 except ImportError:
     print("warning: wandb not installed")
 
+from utils import save_video_as_grid_and_mp4
+
 
 def print_debug(args, s):
     if args.debug:
@@ -36,24 +38,6 @@ def save_texts(texts, save_dir, iterations):
         for text in texts:
             f.write(text + "\n")
 
-
-def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, T: int, fps: int = 5, args=None, key=None):
-    os.makedirs(save_path, exist_ok=True)
-
-    for i, vid in enumerate(video_batch):
-        gif_frames = []
-        for frame in vid:
-            frame = rearrange(frame, "c h w -> h w c")
-            frame = (255.0 * frame).cpu().numpy().astype(np.uint8)
-            gif_frames.append(frame)
-        now_save_path = os.path.join(save_path, f"{i:06d}.mp4")
-        with imageio.get_writer(now_save_path, fps=fps) as writer:
-            for frame in gif_frames:
-                writer.append_data(frame)
-        if args is not None and args.wandb:
-            wandb.log(
-                {key + f"_video_{i}": wandb.Video(now_save_path, fps=fps, format="mp4")}, step=args.iteration + 1
-            )
 
 
 def log_video(batch, model, args, only_log_video_latents=False):
