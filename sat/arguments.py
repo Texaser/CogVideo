@@ -51,6 +51,8 @@ def add_sampling_config_args(parser):
     group.add_argument("--noised_image_input", action="store_true")
     group.add_argument("--noise_last_frame", action="store_true")
     group.add_argument("--noise_mode", action="store_true")
+    group.add_argument("--player_encodings", action="store_true")
+    group.add_argument("--joint_encodings", action="store_true")
 
     return parser
 

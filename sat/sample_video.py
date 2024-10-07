@@ -147,8 +147,13 @@ def sampling_main(args, model_cls):
                         )
                         image = torch.cat([image, subsequent_frames], dim=2)
                     # Add noise based on the selected noise_mode
+                    
+                    joint_encodings = args.joint_encodings if args.joint_encodings else None
+                    player_encodings = args.player_encodings if args.player_encodings else None
                     image, noise_masks = add_noised_conditions_to_frames(
-                        image, bbox, pose, noise_mode=args.noise_mode
+                        image, bbox, pose, noise_mode=args.noise_mode, 
+                        joint_encodings=joint_encodings, 
+                        player_encodings=player_encodings
                     )
                 # import pudb; pudb.set_trace();
                 # image = Image.open(image_path).convert("RGB")

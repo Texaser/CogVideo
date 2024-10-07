@@ -2,7 +2,7 @@ args:
   image2video: True # True for image2video, False for text2video
   latent_channels: 16
   mode: inference
-  load: "/mnt/mir/fan23j/CogVideo/sat/ckpts_5b_lora/5b-lora-i2v-both-last-frame-09-30-10-35" # This is for Full model without lora adapter
+  load: "/mnt/mir/fan23j/CogVideo/sat/ckpts_5b_lora/5b-lora-i2v-player-encodings-10-02-13-44" # This is for Full model without lora adapter
   # load: "{your lora folder} such as zRzRzRzRzRzRzR/lora-disney-08-20-13-28" # This is for Full model without lora adapter
   batch_size: 1
   input_type: txt
@@ -12,8 +12,41 @@ args:
   sampling_fps: 8
   noised_image_input: True
   noise_last_frame: True
-  noise_mode: both # bbox, pose, or both
+  noise_mode: pose # bbox, pose, or both
 #  fp16: True # For CogVideoX-2B
   bf16: True # For CogVideoX-5B and CoGVideoX-5B-I2V
-  output_dir: results/5b-lora-i2v-both-last-frame-09-30-10-35/5000
+  output_dir: results/5b-lora-i2v-player-encodings-10-02-13-44/10000
   force_inference: True
+  # joint_encodings: None
+  # player_encodings: None
+  # joint_encodings: [
+  #       [1, 0, 0],  # Nose
+  #       [0, 1, 0],  # Left Eye
+  #       [0, 0, 1],  # Right Eye
+  #       [1, 1, 0],  # Left Ear
+  #       [1, 0, 1],  # Right Ear
+  #       [0, 1, 1],  # Left Shoulder
+  #       [1, 1, 1],  # Right Shoulder
+  #       [1, 0.5, 0],  # Left Elbow
+  #       [0, 0.5, 1],  # Right Elbow
+  #       [0.5, 1, 0.5],  # Left Wrist
+  #       [0.5, 0, 0.5],  # Right Wrist
+  #       [1, 0.7, 0.3],  # Left Hip
+  #       [0.3, 0.7, 1],  # Right Hip
+  #       [0.7, 1, 0.7],  # Left Knee
+  #       [0.7, 0.7, 1],  # Right Knee
+  #       [0.5, 0.5, 1],  # Left Ankle
+  #       [1, 0.5, 0.5]   # Right Ankle
+  #   ]
+  player_encodings: [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [1, 1, 0], 
+      [1, 0, 1], 
+      [0, 1, 1],
+      [1, 1, 1], 
+      [1, 0.5, 0],
+      [0, 0.5, 1],
+      [0.5, 1, 0.5],
+    ]
