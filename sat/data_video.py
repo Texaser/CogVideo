@@ -21,6 +21,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 import json
 import time
+from video_caption import predict
 
 def read_video(
     filename: str,
@@ -394,12 +395,17 @@ class SFTDataset(Dataset):
                         self.video_paths.append(video_path)
 
                         caption = data['caption']
-                        self.captions.append(caption)
-
-                        bounding_boxes = data['bounding_boxes']
-                        trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
-                        self.tracklets.append(trajectory_data)
-                        self.pose_tracklets.append(keypoints_data)  # Store the pose data
+                        # prompt = "Please describe this video in detail."
+                        # temperature = 0.1
+                        # video_data = open(video_path, 'rb').read()
+                        # caption = predict(prompt, video_data, temperature)
+                        # self.captions.append(caption)
+                        # with open('/mnt/bum/hanyi/repo/CogVideo/sat/configs/captions.txt', 'a') as f:
+                        #     f.write(f"{caption}@@{video_path}\n")
+                        # bounding_boxes = data['bounding_boxes']
+                        # trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
+                        # self.tracklets.append(trajectory_data)
+                        # self.pose_tracklets.append(keypoints_data)  # Store the pose data
 
                         pbar.update(1)
         # import pudb; pudb.set_trace();
@@ -410,7 +416,6 @@ class SFTDataset(Dataset):
 
     def __getitem__(self, index):
         decord.bridge.set_bridge("torch")
-
         video_path = self.video_paths[index]
         vr = VideoReader(uri=video_path, height=-1, width=-1)
         actual_fps = vr.get_avg_fps()
@@ -426,8 +431,8 @@ class SFTDataset(Dataset):
         assert temp_frms is not None
         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-        tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]
-        pose_frms = self.pose_tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]  # Get pose data
+        tracklet_frms = self.tracklets[index][torch.tensor((indices).tolist())][:num_frames]
+        pose_frms = self.pose_tracklets[index][torch.tensor((indices).tolist())][:num_frames]  # Get pose data
 
         tensor_frms = pad_last_frame(
             tensor_frms, self.max_num_frames
