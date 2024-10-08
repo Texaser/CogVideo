@@ -61,6 +61,7 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noise_last_frame = model_config.get("noise_last_frame", False)
         self.joint_encodings = model_config.get("joint_encodings", None)
         self.player_encodings = model_config.get("player_encodings", None)
+        self.pixel_space_loss = model_config.get("pixel_space_loss", False)
 
         # Add noise_mode configuration option
         self.noise_mode = model_config.get('noise_mode', 'pose')  # 'bbox', 'pose', or 'both'
@@ -134,10 +135,38 @@ class SATVideoDiffusionEngine(nn.Module):
         self.first_stage_model = model
 
     def forward(self, x, batch):
-        loss = self.loss_fn(self.model, self.denoiser, self.conditioner, x, batch)
-        loss_mean = loss.mean()
-        loss_dict = {"loss": loss_mean}
-        return loss_mean, loss_dict
+        # Obtain the diffusion loss and additional outputs
+        loss, model_output, noised_input, alphas_cumprod_sqrt = self.loss_fn(self.model, self.denoiser, self.conditioner, x, batch)
+        if self.pixel_space_loss:
+            # Compute x0_pred based on the model's output type
+            # Assuming the model predicts v (velocity prediction), we need to compute x0_pred accordingly
+            # Adjust the computation based on your model's prediction type (e.g., epsilon, x0, or v)
+            
+            # Calculate the standard deviation of the noise
+            sigma_t = (1 - alphas_cumprod_sqrt**2) ** 0.5
+            
+            # Compute x0_pred from v-prediction
+            x0_pred = (noised_input - sigma_t * model_output) / alphas_cumprod_sqrt
+            
+            # Ensure x0_pred is in the correct dtype
+            x0_pred = x0_pred.permute(0,2,1,3,4).contiguous().to(self.dtype)
+            
+            # Decode x0_pred to get the reconstructed image
+            x_hat = self.decode_first_stage(x0_pred)
+            
+            # Get the decoded noised image for comparison
+            x_noised = self.decode_first_stage(noised_input.permute(0,2,1,3,4).contiguous().to(self.dtype))
+
+            mse_loss = F.mse_loss(x_hat, x_noised)
+            
+            # Combine the diffusion loss and the pixel-space MSE loss
+            total_loss = loss.mean() + mse_loss
+        else:
+            total_loss = loss.mean()
+        loss_dict = {
+            "loss": total_loss,
+        }
+        return total_loss, loss_dict
 
     def add_noise_to_frame(self, image):
         sigma = torch.normal(mean=-3.0, std=0.5, size=(image.shape[0],)).to(self.device)
@@ -386,6 +415,7 @@ class SATVideoDiffusionEngine(nn.Module):
         gc.collect()
         torch.cuda.empty_cache()
         loss, loss_dict = self(x, batch)
+        
         return loss, loss_dict
 
     def get_input(self, batch):

@@ -73,13 +73,13 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
     def __call__(self, network, denoiser, conditioner, input, batch):
         cond = conditioner(batch)
         additional_model_inputs = {key: batch[key] for key in self.batch2model_keys.intersection(batch)}
-
+    
         alphas_cumprod_sqrt, idx = self.sigma_sampler(input.shape[0], return_idx=True)
         alphas_cumprod_sqrt = alphas_cumprod_sqrt.to(input.device)
         idx = idx.to(input.device)
-
+    
         noise = torch.randn_like(input)
-
+    
         # broadcast noise
         mp_size = mpu.get_model_parallel_world_size()
         global_rank = torch.distributed.get_rank() // mp_size
@@ -87,28 +87,30 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
         torch.distributed.broadcast(idx, src=src, group=mpu.get_model_parallel_group())
         torch.distributed.broadcast(noise, src=src, group=mpu.get_model_parallel_group())
         torch.distributed.broadcast(alphas_cumprod_sqrt, src=src, group=mpu.get_model_parallel_group())
-
+    
         additional_model_inputs["idx"] = idx
-
+    
         if self.offset_noise_level > 0.0:
             noise = (
                 noise + append_dims(torch.randn(input.shape[0]).to(input.device), input.ndim) * self.offset_noise_level
             )
-
+    
         noised_input = input.float() * append_dims(alphas_cumprod_sqrt, input.ndim) + noise * append_dims(
             (1 - alphas_cumprod_sqrt**2) ** 0.5, input.ndim
         )
-
+    
         if "concat_images" in batch.keys():
             cond["concat"] = batch["concat_images"]
-
-        # [2, 13, 16, 60, 90],[2] dict_keys(['crossattn', 'concat'])  dict_keys(['idx'])
+    
+        # Model output
         model_output = denoiser(network, noised_input, alphas_cumprod_sqrt, cond, **additional_model_inputs)
         w = append_dims(1 / (1 - alphas_cumprod_sqrt**2), input.ndim)  # v-pred
-
-        if self.min_snr_value is not None:
-            w = min(w, self.min_snr_value)
-        return self.get_loss(model_output, input, w)
+    
+        # Compute the diffusion loss
+        loss = self.get_loss(model_output, input, w)
+    
+        # Return additional values needed for x0 reconstruction
+        return loss, model_output, noised_input, alphas_cumprod_sqrt
 
     def get_loss(self, model_output, target, w):
         if self.type == "l2":
