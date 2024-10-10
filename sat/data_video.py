@@ -21,7 +21,9 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 import json
 import time
-from video_caption import predict
+# from video_caption import predict
+sys.path.append("..")
+from tools.caption.video_caption import predict
 
 def read_video(
     filename: str,
@@ -380,7 +382,8 @@ class SFTDataset(Dataset):
         
         total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
                           for filename in filenames if filename.endswith(".json"))
-
+        with open("/mnt/bum/hanyi/repo/CogVideo/sat/configs/prompt.json", "r") as f:
+            captions = json.load(f)
         with tqdm(total=total_files, desc="Loading Data") as pbar:
             for root, dirnames, filenames in os.walk(data_dir):
                 for filename in filenames:
@@ -394,18 +397,19 @@ class SFTDataset(Dataset):
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)
 
-                        caption = data['caption']
+                        caption = captions[video_path]
                         # prompt = "Please describe this video in detail."
                         # temperature = 0.1
                         # video_data = open(video_path, 'rb').read()
                         # caption = predict(prompt, video_data, temperature)
-                        # self.captions.append(caption)
+                        # caption = data['caption']
+                        self.captions.append(caption)
                         # with open('/mnt/bum/hanyi/repo/CogVideo/sat/configs/captions.txt', 'a') as f:
                         #     f.write(f"{caption}@@{video_path}\n")
-                        # bounding_boxes = data['bounding_boxes']
-                        # trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
-                        # self.tracklets.append(trajectory_data)
-                        # self.pose_tracklets.append(keypoints_data)  # Store the pose data
+                        bounding_boxes = data['bounding_boxes']
+                        trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
+                        self.tracklets.append(trajectory_data)
+                        self.pose_tracklets.append(keypoints_data)  # Store the pose data
 
                         pbar.update(1)
         # import pudb; pudb.set_trace();

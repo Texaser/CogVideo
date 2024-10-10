@@ -13,9 +13,9 @@ import torchvision.transforms as TT
 from torchvision.transforms.functional import center_crop, resize
 from torchvision.transforms import InterpolationMode
 from PIL import Image
+import wandb
 
-
-def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, fps: int = 5, args=None, key=None):
+def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, T: int, fps: int = 5, args=None, key=None):
     os.makedirs(save_path, exist_ok=True)
 
     for i, vid in enumerate(video_batch):
@@ -28,6 +28,10 @@ def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, fps: i
         with imageio.get_writer(now_save_path, fps=fps) as writer:
             for frame in gif_frames:
                 writer.append_data(frame)
+        if args is not None and args.wandb:
+            wandb.log(
+                {key + f"_video_{i}": wandb.Video(now_save_path, fps=fps, format="mp4")}, step=args.iteration + 1
+            )
 
 
 def resize_for_rectangle_crop(arr, image_size, reshape_mode="random"):

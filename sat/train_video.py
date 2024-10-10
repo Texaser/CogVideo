@@ -84,6 +84,7 @@ def log_video(batch, model, args, only_log_video_latents=False):
                 os.makedirs(path, exist_ok=True)
                 torch.save(videos["latents"], os.path.join(path, "latents.pt"))
             else:
+                # import pudb; pudb.set_trace();
                 for k in videos:
                     samples = (videos[k] + 1.0) / 2.0
                     filename = "{}_gs-{:06}".format(k, args.iteration)

@@ -275,6 +275,38 @@ class FrozenT5Embedder(AbstractEmbModel):
         with torch.autocast("cuda", enabled=False):
             outputs = self.transformer(input_ids=tokens)
         z = outputs.last_hidden_state
+
+        # prompt_list = torch.load("/mnt/bum/hanyi/repo/CogVideo/sat/configs/prompt_list.pth")
+        # batch_size = 64  
+        # all_embeddings = []
+        
+        # for i in range(0, len(prompt_list), batch_size):
+        #     batch_prompts = prompt_list[i:i+batch_size]
+            
+        #     batch_encoding = self.tokenizer(
+        #         batch_prompts,
+        #         truncation=True,
+        #         max_length=self.max_length,
+        #         return_length=True,
+        #         return_overflowing_tokens=False,
+        #         padding="max_length",
+        #         return_tensors="pt",
+        #     )
+            
+        #     tokens = batch_encoding["input_ids"].to(self.device)
+            
+        #     with torch.autocast("cuda", enabled=False):
+        #         outputs = self.transformer(input_ids=tokens)
+            
+        #     z = outputs.last_hidden_state  # [batch_size, seq_length, hidden_size]
+        #     print(f"Processed batch {i//batch_size + 1}, z.shape: {z.shape}")
+            
+        #     all_embeddings.append(z.cpu())
+        
+        # all_embeddings = torch.cat(all_embeddings, dim=0)  # [total_samples, seq_length, hidden_size]
+        
+        # file_path = '/mnt/bum/hanyi/repo/CogVideo/sat/configs/prompt_embeddings.pth'
+        # torch.save(all_embeddings, file_path)
         return z
 
     def encode(self, text):
@@ -298,8 +330,12 @@ class PrecomputedT5Embedder(AbstractEmbModel):
         if self.local_rank != -1:
             torch.cuda.set_device(self.local_rank)
         # first load to cpu
-        embeddings = torch.load('action_embs.pth', map_location='cpu')
-        self.embeddings = embeddings.to(self.local_rank).requires_grad_(False)
+        # embeddings = torch.load('action_embs.pth', map_location='cpu')
+        # self.embeddings = embeddings.to(self.local_rank).requires_grad_(False)
+
+        embeddings = torch.load('configs/prompt_embeddings.pth', map_location='cpu')
+        self.embeddings = embeddings.requires_grad_(False)
+        self.prompt_list = torch.load('configs/prompt_list.pth', map_location='cpu')
 
         self.basketball_actions = [
             "",
@@ -334,12 +370,26 @@ class PrecomputedT5Embedder(AbstractEmbModel):
         self.action_to_index = {action: i for i, action in enumerate(self.basketball_actions)}
 
     def get_embeddings_from_prompts(self, prompts, embeddings):
-        indices = np.array([self.action_to_index[prompt] for prompt in prompts])
+        indices = []
+
+        for prompt in prompts:
+            try:
+                index = self.prompt_list.index(prompt)
+                indices.append(index)
+            except ValueError:
+                indices.append(0)
+
+        indices = np.array(indices)
+
+        # indices = np.array([self.action_to_index[prompt] for prompt in prompts])
+
         assert len(indices) == len(prompts), f"Not all prompts found in action_to_index. Missing: {set(prompts) - set(self.action_to_index.keys())}"
         
-        indices_tensor = torch.from_numpy(indices).to(self.local_rank)
-        filtered_embeddings = torch.index_select(embeddings, 0, indices_tensor)
-        
+        # indices_tensor = torch.from_numpy(indices).to(self.local_rank)
+        # filtered_embeddings = torch.index_select(embeddings, 0, indices_tensor)
+
+        indices_tensor = torch.from_numpy(indices)
+        filtered_embeddings = torch.index_select(embeddings, 0, indices_tensor).to(self.local_rank)
         return filtered_embeddings
 
     # @autocast
