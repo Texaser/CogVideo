@@ -423,8 +423,8 @@ class SFTDataset(Dataset):
         assert temp_frms is not None
         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-        tracklet_frms = self.tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]
-        pose_frms = self.pose_tracklets[index][torch.tensor((indices - start).tolist())][:num_frames]  # Get pose data
+        tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
+        pose_frms = self.pose_tracklets[index][torch.tensor(indices.tolist())][:num_frames]  # Get pose data
 
         tensor_frms = pad_last_frame(
             tensor_frms, self.max_num_frames

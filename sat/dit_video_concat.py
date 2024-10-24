@@ -434,6 +434,32 @@ class SwiGLUMixin(BaseMixin):
         x = origin.dense_4h_to_h(hidden)
         return x
 
+class RepaMLP(BaseMixin):
+    def __init__(self, hidden_size, projector_dim, z_dim, num_align_layers):
+        super().__init__()
+        self.num_align_layers = num_align_layers
+        self.projection_heads = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_size, projector_dim),
+                nn.SiLU(),
+                nn.Linear(projector_dim, projector_dim),
+                nn.SiLU(),
+                nn.Linear(projector_dim, z_dim),
+            ) for _ in range(num_align_layers)
+        ])
+
+    def forward(self, output):
+        model_output = output[0]
+        hidden_states = output[1:]
+        zs_tilde = []
+        
+        for i, h_t in enumerate(hidden_states[:self.num_align_layers]):
+            projected_h_t = self.projection_heads[i](h_t['hidden_states'])
+            zs_tilde.append(projected_h_t)
+        
+        # Restack tensor
+        return [model_output] + zs_tilde
+
 
 class AdaLNMixin(BaseMixin):
     def __init__(
@@ -768,6 +794,15 @@ class DiffusionTransformer(BaseModel):
             lora_config = module_configs["lora_config"]
             self.add_mixin("lora", instantiate_from_config(lora_config, layer_num=self.num_layers), reinit=True)
 
+        if "repa_mlp_config" in module_configs:
+            repa_mlp_config = module_configs["repa_mlp_config"]
+            self.add_mixin(
+                "repa_mlp",
+                instantiate_from_config(
+                    repa_mlp_config,
+                ),
+                reinit=True,
+            )
         return
 
     def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
@@ -799,7 +834,11 @@ class DiffusionTransformer(BaseModel):
         kwargs["emb"] = emb
         kwargs["encoder_outputs"] = context
         kwargs["text_length"] = context.shape[1]
+        kwargs["output_hidden_states"] = True
 
         kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
-        output = super().forward(**kwargs)[0]
+        output = super().forward(**kwargs)
+
+        if self.mixins.repa_mlp is not None:
+            output = self.mixins.repa_mlp(output)
         return output
