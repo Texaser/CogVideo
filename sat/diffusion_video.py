@@ -60,6 +60,7 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
         self.noise_last_frame = model_config.get("noise_last_frame", False)
         self.pixel_space_loss = model_config.get("pixel_space_loss", False)
+        self.use_color_conditions = model_config.get("use_color_conditions", False)
 
         # Add noise_mode configuration option
         self.noise_mode = model_config.get('noise_mode', 'pose')  # 'bbox', 'pose', or 'both'
@@ -245,6 +246,44 @@ class SATVideoDiffusionEngine(nn.Module):
 
         return image, noise_masks
 
+    def add_color_conditions_to_frames(self, image, segm_tensor):
+        """
+        Instead of adding noise, encodes each player with a distinct color from the tab10 colormap.
+        First frame is kept as reference, subsequent frames show color-coded players.
+        """
+        import matplotlib.pyplot as plt
+        
+        B, C, T, H, W = image.shape
+        _, _, num_objects, _, _ = segm_tensor.shape  # [B, T, 10, H, W]
+        
+        # Get colormap
+        cmap = plt.get_cmap("tab10")
+        
+        # Only modify frames after the first one (keep first frame as reference)
+        for b in range(B):
+            for t in range(1, T):
+                # Start with a black frame
+                colored_frame = torch.zeros((C, H, W), device=image.device, dtype=image.dtype)
+                
+                # Add each player's colored mask
+                for obj_idx in range(num_objects):
+                    mask = segm_tensor[b, t, obj_idx]  # [H, W]
+                    
+                    if not torch.any(mask):
+                        continue
+                    
+                    # Get color for this player from colormap
+                    color = torch.tensor(cmap(obj_idx)[:3], device=image.device, dtype=image.dtype)
+                    
+                    # Add colored mask to frame
+                    for c in range(C):
+                        colored_frame[c] += mask * color[c]
+                
+                # Scale colors to [-1, 1] range and assign to image
+                image[b, :, t] = 2 * colored_frame - 1
+
+        return image, None
+
     def shared_step(self, batch: Dict) -> Any:
         x = self.get_input(batch)
         if self.lr_scale is not None:
@@ -277,7 +316,7 @@ class SATVideoDiffusionEngine(nn.Module):
                 image = torch.cat([image, subsequent_frames], dim=2)
 
             # Add noise based on segmentation masks
-            image, noise_masks = self.add_noised_conditions_to_frames(image, batch['mask'])
+            image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask']) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
 
             # Encode the noised image
             image = self.encode_first_stage(image, batch)
