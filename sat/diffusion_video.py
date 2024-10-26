@@ -59,8 +59,6 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noised_image_all_concat = model_config.get("noised_image_all_concat", False)
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
         self.noise_last_frame = model_config.get("noise_last_frame", False)
-        self.joint_encodings = model_config.get("joint_encodings", None)
-        self.player_encodings = model_config.get("player_encodings", None)
         self.pixel_space_loss = model_config.get("pixel_space_loss", False)
 
         # Add noise_mode configuration option
@@ -133,39 +131,76 @@ class SATVideoDiffusionEngine(nn.Module):
         for param in model.parameters():
             param.requires_grad = False
         self.first_stage_model = model
-
+        
     def forward(self, x, batch):
         # Obtain the diffusion loss and additional outputs
-        loss, model_output, noised_input, alphas_cumprod_sqrt = self.loss_fn(self.model, self.denoiser, self.conditioner, x, batch)
+        loss, model_output, noised_input, alphas_cumprod_sqrt = self.loss_fn(
+            self.model, self.denoiser, self.conditioner, x, batch
+        )
+            
         if self.pixel_space_loss:
-            # Compute x0_pred based on the model's output type
-            # Assuming the model predicts v (velocity prediction), we need to compute x0_pred accordingly
-            # Adjust the computation based on your model's prediction type (e.g., epsilon, x0, or v)
-            
-            # Calculate the standard deviation of the noise
+            # Get segmentation tensor from batch
+            segm_tensor = batch['segm']  # Expected shape: [B, 10, T, H, W]
+            B, num_objects, T, H, W = segm_tensor.shape
+                
+            # Calculate x0_pred from v-prediction
             sigma_t = (1 - alphas_cumprod_sqrt**2) ** 0.5
-            
-            # Compute x0_pred from v-prediction
             x0_pred = (noised_input - sigma_t * model_output) / alphas_cumprod_sqrt
-            
-            # Ensure x0_pred is in the correct dtype
-            x0_pred = x0_pred.permute(0,2,1,3,4).contiguous().to(self.dtype)
-            
-            # Decode x0_pred to get the reconstructed image
+                
+            # Decode predictions and noised input
+            x0_pred = x0_pred.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype)
             x_hat = self.decode_first_stage(x0_pred)
+            x_noised = self.decode_first_stage(noised_input.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
+                
+            # Initialize tensor to accumulate segmentation-based losses
+            seg_loss = 0.0
+            valid_seg_count = 0
+                
+            # Create visualization tensors
+            seg_viz_pred = torch.zeros_like(x_hat)
+            seg_viz_target = torch.zeros_like(x_noised)
             
-            # Get the decoded noised image for comparison
-            x_noised = self.decode_first_stage(noised_input.permute(0,2,1,3,4).contiguous().to(self.dtype))
-
-            mse_loss = F.mse_loss(x_hat, x_noised)
-            
-            # Combine the diffusion loss and the pixel-space MSE loss
-            total_loss = loss.mean() + mse_loss
+            # Compute loss only within segmentation masks
+            for b in range(B):
+                for t in range(T):
+                    for obj_idx in range(num_objects):
+                        mask = segm_tensor[b, obj_idx, t]  # [H, W]
+                        
+                        if not torch.any(mask):
+                            continue
+                            
+                        # Compute MSE loss only within the masked region
+                        pred = x_hat[b, :, t]
+                        target = x_noised[b, :, t]
+                        
+                        seg_loss += F.mse_loss(
+                            pred * mask.unsqueeze(0),
+                            target * mask.unsqueeze(0),
+                            reduction='sum'
+                        )
+                        valid_seg_count += mask.sum().item() * C
+                            
+                        # Store masked regions for visualization
+                        seg_viz_pred[b, :, t] += pred * mask.unsqueeze(0)
+                        seg_viz_target[b, :, t] += target * mask.unsqueeze(0)
+                
+            # Compute average loss over all valid segmentation regions
+            if valid_seg_count > 0:
+                seg_loss = seg_loss / valid_seg_count
+                total_loss = loss.mean() + seg_loss
+            else:
+                total_loss = loss.mean()
+                
+            loss_dict = {
+                "loss": total_loss,
+            }
+            if valid_seg_count > 0:
+                loss_dict["seg_loss"] = seg_loss
+                
         else:
             total_loss = loss.mean()
-        loss_dict = {
-            "loss": total_loss,
-        }
+            loss_dict = {"loss": total_loss}
+                
         return total_loss, loss_dict
 
     def add_noise_to_frame(self, image):
@@ -175,194 +210,39 @@ class SATVideoDiffusionEngine(nn.Module):
         image = image + image_noise
         return image
 
-    def write_noise_masks(self, noise_masks, output_dir='noise_masks', prefix=''):
+    def add_noised_conditions_to_frames(self, image, segm_tensor, noise_mode='segm'):
         """
-        Writes noise masks to image files.
-
-        Args:
-        noise_masks (torch.Tensor): Tensor of shape [B, C, T, H, W] containing noise masks.
-        output_dir (str): Directory to save the noise mask images.
-        prefix (str): Prefix for the saved filenames.
-
-        Returns:
-        None
-        """
-        B, C, T, H, W = noise_masks.shape
-
-        # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
-
-        for b in range(B):
-            for t in range(T):
-                # Extract single noise mask
-                noise_mask = noise_masks[b, :, t]
-
-                noise_mask = noise_mask.float()
-
-                # Convert to numpy array and scale to 0-255 range
-                noise_mask_np = (noise_mask.permute(1, 2, 0).cpu().numpy()).astype(np.uint8)
-
-                # If the noise mask is single-channel, repeat it to create an RGB image
-                if C == 1:
-                    noise_mask_np = np.repeat(noise_mask_np, 3, axis=2)
-
-                # Create filename
-                filename = f'{prefix}batch_{b}_frame_{t}.png'
-                filepath = os.path.join(output_dir, filename)
-
-                # Save the noise mask as an image
-                cv2.imwrite(filepath, cv2.cvtColor(noise_mask_np, cv2.COLOR_RGB2BGR))
-
-        print(f"Noise masks saved in {output_dir}")
-
-    def add_noised_conditions_to_frames(self, image, bbox_tensor, pose_tensor, noise_mode='bbox'):
-        """
-        Injects Gaussian noise into each frame of the image based on the bounding boxes and/or pose keypoints,
+        Injects Gaussian noise into each frame of the image based on the segmentation masks,
         excluding the first frame which retains the reference image with added noise.
-        Returns the modified image and the noise masks for visualization.
         """
-        B, C, T, H, W = image.shape  # Assuming image shape is [B, C, T, H, W]
-        _, _, N, _ = bbox_tensor.shape  # N is the number of bounding boxes per frame
-        _, _, _, K, _ = pose_tensor.shape  # K is the number of keypoints per player
+        B, C, T, H, W = image.shape
+        _, _, num_objects, _, _ = segm_tensor.shape  # [B, T, 10, H, W]
 
         # Initialize a tensor to store noise masks
         noise_masks = torch.zeros_like(image)
 
-        # Initialize joint encodings
-        if self.joint_encodings is not None:
-            joint_encodings = torch.tensor(self.joint_encodings, device=image.device, dtype=image.dtype)
-
-        # Initialize player encodings
-        if self.player_encodings is not None:
-            player_encodings = torch.tensor(self.player_encodings, device=image.device, dtype=image.dtype)
-
         # Only add Gaussian noise to frames after the first
         for b in range(B):
             for t in range(1, T):
-                if noise_mode in ('bbox', 'both'):
-                    # Process bounding boxes
-                    bboxes = bbox_tensor[b, t]  # Shape: [N, 4]
-                    for n in range(N):
-                        bbox = bboxes[n]
-                        x1_norm, y1_norm, x2_norm, y2_norm = bbox
+                # Process segmentation masks for each object
+                for obj_idx in range(num_objects):
+                    # Get segmentation mask for current object
+                    mask = segm_tensor[b, t, obj_idx]  # [H, W]
 
-                        # Convert normalized coordinates to pixel coordinates
-                        x1 = x1_norm * W
-                        y1 = y1_norm * H
-                        x2 = x2_norm * W
-                        y2 = y2_norm * H
+                    # Skip if mask is empty
+                    if not torch.any(mask):
+                        continue
 
-                        # Ensure coordinates are in the correct order
-                        x1, x2 = sorted([x1.item(), x2.item()])
-                        y1, y2 = sorted([y1.item(), y2.item()])
+                    # Generate noise for masked region
+                    noise = torch.randn(C, H, W, device=image.device, dtype=image.dtype)
+                    scaled_noise = noise * mask.unsqueeze(0)  # Scale noise by mask
 
-                        # Convert to integers and clamp
-                        x1 = int(max(0, min(W - 1, x1)))
-                        y1 = int(max(0, min(H - 1, y1)))
-                        x2 = int(max(x1 + 1, min(W, x2)))
-                        y2 = int(max(y1 + 1, min(H, y2)))
+                    # Add noise to the image in place
+                    image[b, :, t] += scaled_noise
+                    
+                    # Store the noise mask
+                    noise_masks[b, :, t] += scaled_noise
 
-                        h = y2 - y1
-                        w = x2 - x1
-
-                        if h <= 0 or w <= 0:
-                            continue  # Skip invalid bounding boxes
-
-                        # Generate a Gaussian mask
-                        y_coords = torch.arange(h, device=image.device).unsqueeze(1).repeat(1, w)
-                        x_coords = torch.arange(w, device=image.device).unsqueeze(0).repeat(h, 1)
-                        mx = (h - 1) / 2.0
-                        my = (w - 1) / 2.0
-                        sx = h / 3.0
-                        sy = w / 3.0
-                        gaussian = (1 / (2 * math.pi * sx * sy)) * torch.exp(
-                            -(((x_coords - my) ** 2) / (2 * sy ** 2) + ((y_coords - mx) ** 2) / (2 * sx ** 2))
-                        )
-                        gaussian = gaussian / gaussian.max()
-                        gaussian = gaussian.to(image.dtype)
-
-                        # Apply player-specific encoding if available
-                        if self.player_encodings is not None:
-                            player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
-                            encoded_gaussian = gaussian.unsqueeze(0) * player_encoding
-                        else:
-                            encoded_gaussian = gaussian.unsqueeze(0)
-
-                        # Generate noise scaled by the encoded Gaussian mask
-                        noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
-
-                        # Add noise to the image in place
-                        image[b, :, t, y1:y2, x1:x2] += noise
-
-                        # Store the noise mask
-                        noise_masks[b, :, t, y1:y2, x1:x2] = noise
-
-                if noise_mode in ('pose', 'both'):
-                    # Process pose keypoints
-                    keypoints = pose_tensor[b, t]  # Shape: [N, K, 2]
-                    for n in range(N):
-                        player_keypoints = keypoints[n]  # Shape: [K, 2]
-                        for k in range(K):
-                            x_norm, y_norm = player_keypoints[k]
-
-                            # Convert normalized coordinates to pixel coordinates
-                            x = x_norm * W
-                            y = y_norm * H
-
-                            # Skip invalid keypoints (e.g., zero coordinates)
-                            if x < 0 or x >= W or y < 0 or y >= H:
-                                continue
-
-                            x = int(torch.clamp(x, 0, W - 1).item())
-                            y = int(torch.clamp(y, 0, H - 1).item())
-
-                            # Define a small window around the keypoint
-                            window_size = 15  # Adjust this value as needed
-                            x1 = max(0, x - window_size // 2)
-                            y1 = max(0, y - window_size // 2)
-                            x2 = min(W, x + window_size // 2 + 1)
-                            y2 = min(H, y + window_size // 2 + 1)
-
-                            h = y2 - y1
-                            w = x2 - x1
-
-                            if h <= 0 or w <= 0:
-                                continue
-
-                            # Generate a Gaussian mask centered at the keypoint
-                            y_coords = torch.arange(y1, y2, device=image.device).unsqueeze(1).repeat(1, w) - y
-                            x_coords = torch.arange(x1, x2, device=image.device).unsqueeze(0).repeat(h, 1) - x
-                            sx = h / 3.0
-                            sy = w / 3.0
-                            gaussian = (1 / (2 * math.pi * sx * sy)) * torch.exp(
-                                -(((x_coords) ** 2) / (2 * sy ** 2) + ((y_coords) ** 2) / (2 * sx ** 2))
-                            )
-                            gaussian = gaussian / gaussian.max()
-                            gaussian = gaussian.to(image.dtype)
-
-                            # Apply joint and player-specific encodings if available
-                            if self.joint_encodings is not None and self.player_encodings is not None:
-                                joint_encoding = joint_encodings[k].unsqueeze(-1).unsqueeze(-1)
-                                player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
-                                encoded_gaussian = gaussian.unsqueeze(0) * joint_encoding * player_encoding
-                            elif self.joint_encodings is not None:
-                                joint_encoding = joint_encodings[k].unsqueeze(-1).unsqueeze(-1)
-                                encoded_gaussian = gaussian.unsqueeze(0) * joint_encoding
-                            elif self.player_encodings is not None:
-                                player_encoding = player_encodings[n].unsqueeze(-1).unsqueeze(-1)
-                                encoded_gaussian = gaussian.unsqueeze(0) * player_encoding
-                            else:
-                                encoded_gaussian = gaussian.unsqueeze(0)
-
-                            # Generate noise scaled by the encoded Gaussian mask
-                            noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
-
-                            # Add noise to the image in place
-                            image[b, :, t, y1:y2, x1:x2] += noise
-
-                            # Store the noise mask
-                            noise_masks[b, :, t, y1:y2, x1:x2] = noise
-        #self.write_noise_masks(noise_masks)
         return image, noise_masks
 
     def shared_step(self, batch: Dict) -> Any:
@@ -378,7 +258,7 @@ class SATVideoDiffusionEngine(nn.Module):
         if self.noised_image_input:
             image = x[:, :, 0:1]
             image = self.add_noise_to_frame(image)
-            num_frames = batch['bbox'].shape[1]
+            num_frames = batch['mask'].shape[1]  # Get number of frames from mask tensor
 
             if self.noise_last_frame:
                 last_frame = self.add_noise_to_frame(x[:, :, -1:])
@@ -396,10 +276,8 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
 
-            # Add noise based on the selected noise_mode
-            image, noise_masks = self.add_noised_conditions_to_frames(
-                image, batch['bbox'], batch['pose'], noise_mode=self.noise_mode
-            )
+            # Add noise based on segmentation masks
+            image, noise_masks = self.add_noised_conditions_to_frames(image, batch['mask'])
 
             # Encode the noised image
             image = self.encode_first_stage(image, batch)
@@ -574,7 +452,8 @@ class SATVideoDiffusionEngine(nn.Module):
         if self.noised_image_input:
             image = x[:, :, 0:1]
             image = self.add_noise_to_frame(image)
-            num_frames = batch['bbox'].shape[1]
+            num_frames = batch['mask'].shape[1]
+
             if self.noise_last_frame:
                 last_frame = self.add_noise_to_frame(x[:, :, -1:])
                 subsequent_frames = torch.zeros(
@@ -590,70 +469,61 @@ class SATVideoDiffusionEngine(nn.Module):
                     dtype=image.dtype
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
-            # Add noise based on the selected noise_mode
-            image, noise_masks = self.add_noised_conditions_to_frames(
-                image, batch['bbox'], batch['pose'], noise_mode=self.noise_mode
-            )
 
-            # Encode the noised image
+            image, noise_masks = self.add_noised_conditions_to_frames(image, batch['mask'])
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
-            
+
             c["concat"] = image
             uc["concat"] = image
             samples = self.sample(c, shape=z.shape[1:], uc=uc, batch_size=N, **sampling_kwargs)
             samples = samples.permute(0, 2, 1, 3, 4).contiguous()
+            
             if only_log_video_latents:
                 latents = 1.0 / self.scale_factor * samples
                 log["latents"] = latents
             else:
                 samples = self.decode_first_stage(samples).to(torch.float32)
                 samples = samples.permute(0, 2, 1, 3, 4).contiguous()
-                # Store the raw samples
+                
+                # Store samples
                 log["samples_raw"] = samples.clone()
-                # Draw bounding boxes on the samples
-                samples_with_bbox = self.draw_annotations(samples.clone(), batch, draw_bbox=True, draw_pose=False)
-                log["samples_bbox"] = samples_with_bbox
-                # Draw pose keypoints on the samples
-                samples_with_pose = self.draw_annotations(samples.clone(), batch, draw_bbox=False, draw_pose=True)
-                log["samples_pose"] = samples_with_pose
-        else:
-            samples = self.sample(c, shape=z.shape[1:], uc=uc, batch_size=N, **sampling_kwargs)
-            samples = samples.permute(0, 2, 1, 3, 4).contiguous()
-            if only_log_video_latents:
-                latents = 1.0 / self.scale_factor * samples
-                log["latents"] = latents
-            else:
-                samples = self.decode_first_stage(samples).to(torch.float32)
-                samples = samples.permute(0, 2, 1, 3, 4).contiguous()
-                # Store the raw samples
-                log["samples_raw"] = samples.clone()
-                # Draw bounding boxes on the samples
-                samples_with_bbox = self.draw_annotations(samples.clone(), batch, draw_bbox=True, draw_pose=False)
-                log["samples_bbox"] = samples_with_bbox
-                # Draw pose keypoints on the samples
-                samples_with_pose = self.draw_annotations(samples.clone(), batch, draw_bbox=False, draw_pose=True)
-                log["samples_pose"] = samples_with_pose
+                
+                # Visualize samples with segmentation overlay
+                samples_with_segm = self.draw_segmentation_overlay(samples.clone(), batch)
+                log["samples_segm"] = samples_with_segm
+                
         return log
     
-    def draw_annotations(self, samples, batch, draw_bbox=True, draw_pose=True):
+    def draw_segmentation_overlay(self, samples, batch):
         """
-        Draws bounding boxes and/or pose annotations on the decoded video samples.
-
+        Draws segmentation mask overlays on the decoded video samples.
+        
         Args:
-            samples (Tensor): Decoded video samples of shape [B, T, C, H, W].
-            batch (Dict): Batch dictionary containing 'bbox' and 'pose'.
-            draw_bbox (bool): Whether to draw bounding boxes.
-            draw_pose (bool): Whether to draw pose keypoints.
-
+            samples (Tensor): Decoded video samples of shape [B, T, C, H, W]
+            batch (Dict): Batch dictionary containing 'segm' with shape [B, 10, T, H, W]
+        
         Returns:
-            Tensor: Video samples with annotations drawn, same shape as input samples.
+            Tensor: Video samples with segmentation overlays, same shape as input samples
         """
-        B, T, C, H, W = samples.shape
-        N = batch['bbox'].shape[2]  # Number of bounding boxes per frame
-        K = batch['pose'].shape[3]  # Number of keypoints per player
+        B, C, T, H, W = samples.shape
+        num_objects = batch['mask'].shape[1]
 
-        samples_with_annotations = samples.clone()
+        # Define colors for different objects (in BGR format for OpenCV)
+        colors = [
+            (255, 0, 0),   # Red
+            (0, 255, 0),   # Green
+            (0, 0, 255),   # Blue
+            (255, 255, 0), # Cyan
+            (255, 0, 255), # Magenta
+            (0, 255, 255), # Yellow
+            (128, 0, 0),   # Dark red
+            (0, 128, 0),   # Dark green
+            (0, 0, 128),   # Dark blue
+            (128, 128, 0)  # Olive
+        ]
+
+        samples_with_overlay = samples.clone()
 
         for b in range(B):
             for t in range(T):
@@ -665,49 +535,31 @@ class SATVideoDiffusionEngine(nn.Module):
                 # Convert from RGB to BGR for OpenCV
                 frame_np = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
 
-                if draw_bbox:
-                    # Get bounding boxes
-                    bboxes = batch['bbox'][b, t]  # Shape: [N, 4]
-                    for n in range(N):
-                        bbox = bboxes[n]  # [4]
-                        x1_norm, y1_norm, x2_norm, y2_norm = bbox.cpu().numpy()
-                        # Skip invalid bounding boxes
-                        if (x1_norm == x2_norm) and (y1_norm == y2_norm):
-                            continue
-                        x1 = int(x1_norm * W)
-                        y1 = int(y1_norm * H)
-                        x2 = int(x2_norm * W)
-                        y2 = int(y2_norm * H)
-                        # Ensure coordinates are within image bounds
-                        x1 = max(0, min(W - 1, x1))
-                        y1 = max(0, min(H - 1, y1))
-                        x2 = max(0, min(W - 1, x2))
-                        y2 = max(0, min(H - 1, y2))
-                        # Draw rectangle on frame_np
-                        cv2.rectangle(frame_np, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
+                # Create overlay mask
+                overlay = np.zeros_like(frame_np)
+                
+                # Draw each object's segmentation
+                for obj_idx in range(num_objects):
+                    mask = batch['mask'][b, t, obj_idx].cpu().numpy()
+                    if not np.any(mask):
+                        continue
+                        
+                    # Create colored mask for current object
+                    color_mask = np.zeros_like(frame_np)
+                    color_mask[mask > 0] = colors[obj_idx]
+                    
+                    # Add to overlay with transparency
+                    overlay = cv2.addWeighted(overlay, 1.0, color_mask, 0.5, 0)
 
-                if draw_pose:
-                    # Get poses
-                    poses = batch['pose'][b, t]  # Shape: [N, K, 2]
-                    for n in range(N):
-                        keypoints = poses[n]  # Shape: [K, 2]
-                        for k in range(K):
-                            x_norm, y_norm = keypoints[k].cpu().numpy()
-                            # Skip invalid keypoints
-                            if x_norm == 0 and y_norm == 0:
-                                continue
-                            x = int(x_norm * W)
-                            y = int(y_norm * H)
-                            # Ensure coordinates are within image bounds
-                            x = max(0, min(W - 1, x))
-                            y = max(0, min(H - 1, y))
-                            # Draw circle on frame_np
-                            cv2.circle(frame_np, (x, y), radius=3, color=(0, 0, 255), thickness=-1)
+                # Combine frame with overlay
+                frame_with_overlay = cv2.addWeighted(frame_np, 1.0, overlay, 0.5, 0)
 
-                # Convert from BGR back to RGB
-                frame_np = cv2.cvtColor(frame_np, cv2.COLOR_BGR2RGB)
-                # Convert frame_np back to tensor
-                frame_tensor = torch.from_numpy(frame_np.astype(np.float32).transpose(2, 0, 1) / 127.5 - 1.0).to(samples.device)
-                samples_with_annotations[b, t] = frame_tensor
+                # Convert back to RGB and tensor format
+                frame_with_overlay = cv2.cvtColor(frame_with_overlay, cv2.COLOR_BGR2RGB)
+                frame_tensor = torch.from_numpy(
+                    frame_with_overlay.astype(np.float32).transpose(2, 0, 1) / 127.5 - 1.0
+                ).to(samples.device)
+                
+                samples_with_overlay[b, t] = frame_tensor
 
-        return samples_with_annotations
+        return samples_with_overlay

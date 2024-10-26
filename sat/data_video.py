@@ -372,8 +372,9 @@ class SFTDataset(Dataset):
 
         self.video_paths = []
         self.captions = []
-        self.tracklets = []
-        self.pose_tracklets = []  # New list to store pose tracklets
+        # self.tracklets = []
+        # self.pose_tracklets = []
+        self.mask_paths = []
 
         start_time = time.time()
         
@@ -390,14 +391,35 @@ class SFTDataset(Dataset):
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)
 
+                        # Get video ID from path to locate corresponding mask folder
+                        mask_base_path = video_path.replace(
+                            '/mnt/mir/levlevi/hq-basketball-dataset/filtered-clips-aggressive-thresh/',
+                            '/mnt/mir/fan23j/data/hq-poses-strict-sam/'
+                        )
+                        mask_base_path = os.path.splitext(mask_base_path)[0]  # Remove .mp4 extension
+
+                        # Check if all player masks exist
+                        player_mask_paths = []
+                        all_masks_exist = True
+                        for player_idx in range(10):
+                            mask_path = f"{mask_base_path}/masks/object_{player_idx}_masks.npy"
+                            if os.path.exists(mask_path):
+                                player_mask_paths.append(mask_path)
+                            else:
+                                print(f"Warning: Mask not found for video {mask_base_path}, player {player_idx}")
+                                all_masks_exist = False
+                                break
+                        
+                        if not all_masks_exist:
+                            continue
                         caption = data['caption']
                         self.captions.append(caption)
 
-                        bounding_boxes = data['bounding_boxes']
-                        trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
-                        self.tracklets.append(trajectory_data)
-                        self.pose_tracklets.append(keypoints_data)  # Store the pose data
-
+                       # bounding_boxes = data['bounding_boxes']
+                       #trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
+                       # self.tracklets.append(trajectory_data)
+                        #self.pose_tracklets.append(keypoints_data)  # Store the pose data
+                        self.mask_paths.append(player_mask_paths)
                         pbar.update(1)
 
         end_time = time.time()
@@ -421,10 +443,17 @@ class SFTDataset(Dataset):
         indices = np.arange(start, end, (end - start) // num_frames).astype(int)
         temp_frms = vr.get_batch(np.arange(start, end_safty))
         assert temp_frms is not None
+        # Load masks for the selected frames
+        mask_frms = self.load_and_process_masks(
+            self.mask_paths[index], 
+            indices, 
+            num_frames, 
+            (720, 1280)
+        )
         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-        tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
-        pose_frms = self.pose_tracklets[index][torch.tensor(indices.tolist())][:num_frames]  # Get pose data
+        #tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
+        #pose_frms = self.pose_tracklets[index][torch.tensor(indices.tolist())][:num_frames]  # Get pose data
 
         tensor_frms = pad_last_frame(
             tensor_frms, self.max_num_frames
@@ -434,90 +463,176 @@ class SFTDataset(Dataset):
             tensor_frms, self.video_size, reshape_mode="center"
         )
         tensor_frms = (tensor_frms - 127.5) / 127.5
-        tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
-        pose_frms = self.adjust_keypoints(pose_frms, scale, top, left, orig_w, orig_h)  # Adjust keypoints
+        #tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
+        #pose_frms = self.adjust_keypoints(pose_frms, scale, top, left, orig_w, orig_h)  # Adjust keypoints
         item = {
             "mp4": tensor_frms,
-            "bbox": tracklet_frms,
-            "pose": pose_frms,  # Include pose data in the item
+            "mask": mask_frms,
+            # "bbox": tracklet_frms,
+            # "pose": pose_frms,
             "txt": self.captions[index],
             "num_frames": num_frames,
             "fps": self.fps,
         }
         return item
 
-    def adjust_bounding_boxes(self, bounding_boxes, scale, top, left, orig_w, orig_h):
-        # Convert normalized coordinates to pixel coordinates in the original frame
-        bounding_boxes[:, :, 0] *= orig_w  # x1
-        bounding_boxes[:, :, 1] *= orig_h  # y1
-        bounding_boxes[:, :, 2] *= orig_w  # x2
-        bounding_boxes[:, :, 3] *= orig_h  # y2
+    # def adjust_bounding_boxes(self, bounding_boxes, scale, top, left, orig_w, orig_h):
+    #     # Convert normalized coordinates to pixel coordinates in the original frame
+    #     bounding_boxes[:, :, 0] *= orig_w  # x1
+    #     bounding_boxes[:, :, 1] *= orig_h  # y1
+    #     bounding_boxes[:, :, 2] *= orig_w  # x2
+    #     bounding_boxes[:, :, 3] *= orig_h  # y2
 
-        # Apply scaling
-        bounding_boxes *= scale
+    #     # Apply scaling
+    #     bounding_boxes *= scale
 
-        # Apply cropping offsets
-        bounding_boxes[:, :, [0, 2]] -= left
-        bounding_boxes[:, :, [1, 3]] -= top
+    #     # Apply cropping offsets
+    #     bounding_boxes[:, :, [0, 2]] -= left
+    #     bounding_boxes[:, :, [1, 3]] -= top
 
-        # Convert back to normalized coordinates in the new frame size
-        bounding_boxes[:, :, 0] /= self.video_size[1]  # x1
-        bounding_boxes[:, :, 1] /= self.video_size[0]  # y1
-        bounding_boxes[:, :, 2] /= self.video_size[1]  # x2
-        bounding_boxes[:, :, 3] /= self.video_size[0]  # y2
+    #     # Convert back to normalized coordinates in the new frame size
+    #     bounding_boxes[:, :, 0] /= self.video_size[1]  # x1
+    #     bounding_boxes[:, :, 1] /= self.video_size[0]  # y1
+    #     bounding_boxes[:, :, 2] /= self.video_size[1]  # x2
+    #     bounding_boxes[:, :, 3] /= self.video_size[0]  # y2
 
-        # Clip values to [0, 1]
-        bounding_boxes = bounding_boxes.clip(0, 1)
+    #     # Clip values to [0, 1]
+    #     bounding_boxes = bounding_boxes.clip(0, 1)
 
-        return bounding_boxes
+    #     return bounding_boxes
 
-    def adjust_keypoints(self, keypoints, scale, top, left, orig_w, orig_h):
-        # Convert normalized coordinates to pixel coordinates in the original frame
-        keypoints[:, :, :, 0] *= orig_w  # x
-        keypoints[:, :, :, 1] *= orig_h  # y
+    # def adjust_keypoints(self, keypoints, scale, top, left, orig_w, orig_h):
+    #     # Convert normalized coordinates to pixel coordinates in the original frame
+    #     keypoints[:, :, :, 0] *= orig_w  # x
+    #     keypoints[:, :, :, 1] *= orig_h  # y
 
-        # Apply scaling
-        keypoints *= scale
+    #     # Apply scaling
+    #     keypoints *= scale
 
-        # Apply cropping offsets
-        keypoints[:, :, :, 0] -= left
-        keypoints[:, :, :, 1] -= top
+    #     # Apply cropping offsets
+    #     keypoints[:, :, :, 0] -= left
+    #     keypoints[:, :, :, 1] -= top
 
-        # Convert back to normalized coordinates in the new frame size
-        keypoints[:, :, :, 0] /= self.video_size[1]  # x
-        keypoints[:, :, :, 1] /= self.video_size[0]  # y
+    #     # Convert back to normalized coordinates in the new frame size
+    #     keypoints[:, :, :, 0] /= self.video_size[1]  # x
+    #     keypoints[:, :, :, 1] /= self.video_size[0]  # y
 
-        # Clip values to [0, 1]
-        keypoints = keypoints.clamp(0, 1)
+    #     # Clip values to [0, 1]
+    #     keypoints = keypoints.clamp(0, 1)
 
-        return keypoints
+    #     return keypoints
 
-    def encode_bbox_tracklet(self, bounding_boxes):
-        num_frames = len(bounding_boxes)
-        num_players = 10
-        num_keypoints = 17
+    # def encode_bbox_tracklet(self, bounding_boxes):
+    #     num_frames = len(bounding_boxes)
+    #     num_players = 10
+    #     num_keypoints = 17
 
-        trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
-        keypoints_data = [[[[0, 0] for _ in range(num_keypoints)] for _ in range(num_players)] for _ in range(num_frames)]
+    #     trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
+    #     keypoints_data = [[[[0, 0] for _ in range(num_keypoints)] for _ in range(num_players)] for _ in range(num_frames)]
 
-        for frame_idx, frame in enumerate(bounding_boxes):
-            assert len(frame['bounding_box_instances']) == num_players
-            for player_idx, box in enumerate(frame['bounding_box_instances']):
-                if box is not None:
-                    trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
-                    if 'keypoints' in box and box['keypoints']:
-                        keypoints = box['keypoints']
-                        if len(keypoints) == 0:
-                            # pad with zeros
-                            keypoints_xy = [[0, 0] for _ in range(num_keypoints)]
-                        else:
-                            keypoints_xy = [[kp[0], kp[1]] for kp in keypoints]
-                        keypoints_data[frame_idx][player_idx] = keypoints_xy
+    #     for frame_idx, frame in enumerate(bounding_boxes):
+    #         assert len(frame['bounding_box_instances']) == num_players
+    #         for player_idx, box in enumerate(frame['bounding_box_instances']):
+    #             if box is not None:
+    #                 trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
+    #                 if 'keypoints' in box and box['keypoints']:
+    #                     keypoints = box['keypoints']
+    #                     if len(keypoints) == 0:
+    #                         # pad with zeros
+    #                         keypoints_xy = [[0, 0] for _ in range(num_keypoints)]
+    #                     else:
+    #                         keypoints_xy = [[kp[0], kp[1]] for kp in keypoints]
+    #                     keypoints_data[frame_idx][player_idx] = keypoints_xy
 
-        # Convert to tensors
-        trajectory_data = torch.tensor(trajectory_data, dtype=torch.float16)
-        keypoints_data = torch.tensor(keypoints_data, dtype=torch.float16)
-        return trajectory_data, keypoints_data
+    #     # Convert to tensors
+    #     trajectory_data = torch.tensor(trajectory_data, dtype=torch.float16)
+    #     keypoints_data = torch.tensor(keypoints_data, dtype=torch.float16)
+    #     return trajectory_data, keypoints_data
+
+    def load_and_process_masks(self, mask_paths, indices, num_frames, original_size):
+        """
+        Load and process segmentation masks for selected frames for all players
+        mask_paths: list of paths to mask files for each player
+        Handles sparse CSR matrix format for masks
+        """
+        # Initialize tensor to store masks for all objects
+        processed_masks = torch.zeros(
+            (num_frames, 10, self.video_size[0], self.video_size[1]), 
+            dtype=torch.float16
+        )
+        
+        # Calculate scaling and cropping parameters
+        if original_size[1] / original_size[0] > self.video_size[1] / self.video_size[0]:
+            scale = self.video_size[0] / original_size[0]
+            new_height = self.video_size[0]
+            new_width = int(original_size[1] * scale)
+        else:
+            scale = self.video_size[1] / original_size[1]
+            new_width = self.video_size[1]
+            new_height = int(original_size[0] * scale)
+
+        delta_h = new_height - self.video_size[0]
+        delta_w = new_width - self.video_size[1]
+        top = delta_h // 2
+        left = delta_w // 2
+
+        # Load and process masks for each player
+        for player_idx, mask_path in enumerate(mask_paths):
+            masks_dict = np.load(mask_path, allow_pickle=True).item()
+            
+            for i, idx in enumerate(indices[:num_frames]):
+                frame_key = f'frame_{idx}'
+                if frame_key in masks_dict:
+                    # Convert sparse matrix to dense numpy array
+                    sparse_mask = masks_dict[frame_key]
+                    mask = torch.from_numpy(sparse_mask.toarray()).float()
+                    
+                    # Resize and crop mask
+                    processed_mask = self.resize_and_crop_mask(
+                        mask,
+                        original_size,
+                        self.video_size,
+                        scale,
+                        top,
+                        left
+                    )
+                    
+                    processed_masks[i, player_idx] = processed_mask
+
+        return processed_masks
+
+    def resize_and_crop_mask(self, mask, original_size, target_size, scale, top, left):
+            """
+            Resize and crop a single mask to match the video frame processing
+            mask: tensor of shape (H, W)
+            """
+            # Resize mask to match the scaled size before cropping
+            if original_size[1] / original_size[0] > target_size[1] / target_size[0]:
+                scale = target_size[0] / original_size[0]
+                new_height = target_size[0]
+                new_width = int(original_size[1] * scale)
+            else:
+                scale = target_size[1] / original_size[1]
+                new_width = target_size[1]
+                new_height = int(original_size[0] * scale)
+
+            # Resize mask using nearest neighbor interpolation
+            resized_mask = TT.functional.resize(
+                mask.unsqueeze(0).unsqueeze(0),
+                size=[new_height, new_width],
+                interpolation=InterpolationMode.NEAREST
+            ).squeeze()
+
+            # Crop the mask
+            cropped_mask = TT.functional.crop(
+                resized_mask.unsqueeze(0),
+                top=top,
+                left=left,
+                height=target_size[0],
+                width=target_size[1]
+            ).squeeze()
+
+            return cropped_mask
 
     def __len__(self):
         return len(self.video_paths)
