@@ -26,7 +26,8 @@ from utils import (
     resize_for_rectangle_crop, 
     add_noise_to_frame, 
     write_noise_masks, 
-    add_noised_conditions_to_frames
+    add_noised_conditions_to_frames,
+    draw_annotations_infer
 )
 
 def read_from_cli():
@@ -95,6 +96,7 @@ def sampling_main(args, model_cls):
 
     image_size = [480, 720]
     num_frames = 49
+    # import pudb; pudb.set_trace();
     if args.image2video:
         chained_trainsforms = []
         chained_trainsforms.append(TT.ToTensor())
@@ -150,11 +152,26 @@ def sampling_main(args, model_cls):
                     
                     joint_encodings = args.joint_encodings if args.joint_encodings else None
                     player_encodings = args.player_encodings if args.player_encodings else None
+                    bbox_o = bbox.clone()
+                    pose_o = pose.clone()
+                    if args.player_dropout_number:
+                        if args.player_dropout_number == 10:
+                            pose = None
+                        else:                            
+                            player_dropout_number = args.player_dropout_number
+                            _, _, Np, K, _ = pose.shape
+                            # indices_to_drop_p = torch.randperm(Np, device=pose.device)[:player_dropout_number]
+                            indices_to_drop_p = torch.arange(player_dropout_number, device=pose.device)
+                            
+                            pose = torch.index_select(pose, 2, torch.tensor([i for i in range(Np) if i not in indices_to_drop_p], device=pose.device))
+                            bbox = torch.index_select(bbox, 2, torch.tensor([i for i in range(Np) if i not in indices_to_drop_p], device=bbox.device))
                     image, noise_masks = add_noised_conditions_to_frames(
                         image, bbox, pose, noise_mode=args.noise_mode, 
                         joint_encodings=joint_encodings, 
-                        player_encodings=player_encodings
+                        player_encodings=player_encodings,
+                        inference=True
                     )
+                    
                 # import pudb; pudb.set_trace();
                 # image = Image.open(image_path).convert("RGB")
                 # image = transform(image).unsqueeze(0).to("cuda")
@@ -239,12 +256,13 @@ def sampling_main(args, model_cls):
                 recon = torch.cat(recons, dim=2).to(torch.float32)
                 samples_x = recon.permute(0, 2, 1, 3, 4).contiguous()
                 samples = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0).cpu()
-
+                samples_bbox = draw_annotations_infer(samples.clone(), bbox_o, pose_o, draw_bbox=True, draw_pose=False)
                 save_path = os.path.join(
                     args.output_dir, str(cnt) + "_" + text.replace(" ", "_").replace("/", "")[:120], str(index)
                 )
                 if mpu.get_model_parallel_rank() == 0:
-                    save_video_as_grid_and_mp4(samples, save_path, fps=args.sampling_fps)
+                    # save_video_as_grid_and_mp4(samples, save_path, fps=args.sampling_fps)
+                    save_video_as_grid_and_mp4(samples_bbox, save_path, fps=args.sampling_fps)
 
 
 if __name__ == "__main__":

@@ -97,11 +97,33 @@ def predict(prompt, video_data, temperature):
 
 
 def test():
-    prompt = "Please describe this video in detail."
+    video_data = open('/mnt/bum/hanyi/data/video/327261452_screen_43.903_0.mp4', 'rb').read()
     temperature = 0.1
-    video_data = open('test.mp4', 'rb').read()
-    response = predict(prompt, video_data, temperature)
-    print(response)
+
+    # prompt = "What action are they doing for each player?"
+    # prompt = "Please describe this video in detail including a play-byscoreboard-play narration that describes each significant action chronologically, capturing the flow of the game from start to finish. Elaborate on the key actions occurring in the game, such as how shots are made, how rebounds are secured, and any other pivotal moments, providing insights into the players' techniques, movements, and any challenges they face during these actions."
+    # prompt = "Please provide the game detail"
+
+    # prompt = "Describe this video in detail."
+    # response1 = predict(prompt, video_data, temperature)
+    # print(response1)
+
+    # # prompt = "Please describe this video in detail following the time displayed on the scoreboard."
+    # # prompt = "Provide a detailed description of every player's motion and timeclock"
+    # # prompt = "For each key time interval visible on the scoreboard, "
+
+    # prompt = "Please offer each player's motion"
+    # response2 = predict(prompt, video_data, temperature)
+    # print(response2)
+
+    # prompt = "Please offer the detail of scoreboard"
+    # response3 = predict(prompt, video_data, temperature)
+    # print(response3)
+
+    prompt = "Generate the video detail like this format: {At the 3rd quarter with 6 minutes and 42.6 seconds remaining, Cleveland Cavaliers’ players are positioned: one at the top of the key, another near the right wing beyond the three-point line, and two others near the left corner and just inside the left arc. Meanwhile, Atlanta Hawks’ players are spread defensively: one at the top center, another near the right elbow, one at the center of the paint, and two others at the right low post and left low post. As the play progresses, Cleveland’s players move to positions, with a player coming inside the middle of the right arc, one staying at the top near the center, and another player moving towards the left low post. Hawks adjust defensively: one player guards near the middle of the court, a second near the right elbow inside the paint, and another positioned near the center of the paint. In the next moments, Cleveland players maintain their spacing with one now near the right low post and another in the paint near the left elbow. Hawks’ defending players move slightly, positioning themselves to restrict movement inside and near the arc - one closely guarding near the left block and another at the right elbow. At 6 minutes and 39.6 seconds, Cleveland players focus their positions deeper into the key and near the right block, while Hawks’ defenders continue to maintain a defense-centric approach in the paint and slightly above the free-throw line. Finally, before the 6 minutes and 38.5 seconds mark in the 3rd quarter, during a transition, Cleveland's Tristan Thompson fouls Paul Millsap from the Atlanta Hawks at a point which leads to a stoppage in play. Both teams again reposition with one Hawks’ player now alongside the right low post and others stretching towards center and left positions near the arc.}"
+    response4 = predict(prompt, video_data, temperature)
+    print(response4)
+
 
 
 if __name__ == '__main__':

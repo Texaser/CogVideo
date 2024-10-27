@@ -23,7 +23,7 @@ try:
 except ImportError:
     print("warning: wandb not installed")
 
-from utils import save_video_as_grid_and_mp4
+from utils import save_video_as_grid_and_mp4, add_noised_conditions_to_frames
 
 
 def print_debug(args, s):
@@ -91,7 +91,8 @@ def log_video(batch, model, args, only_log_video_latents=False):
 
                     path = os.path.join(root, filename)
                     os.makedirs(os.path.split(path)[0], exist_ok=True)
-                    save_video_as_grid_and_mp4(samples, path, num_frames // fps, fps, args, k)
+                    # save_video_as_grid_and_mp4(samples, path, num_frames // fps, fps, args, k)
+                    save_video_as_grid_and_mp4(samples, path, fps)
 
 
 def broad_cast_batch(batch):

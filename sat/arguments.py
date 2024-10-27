@@ -49,6 +49,8 @@ def add_sampling_config_args(parser):
     group.add_argument("--image2video", action="store_true")
     group.add_argument("--sampling_image_size", action="store_true")
     group.add_argument("--noised_image_input", action="store_true")
+    group.add_argument("--conditions_dropout", action="store_true")
+    group.add_argument("--player_dropout_number", type=int, default=0)
     group.add_argument("--noise_last_frame", action="store_true")
     group.add_argument("--noise_mode", action="store_true")
     group.add_argument("--player_encodings", action="store_true")

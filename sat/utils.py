@@ -14,8 +14,10 @@ from torchvision.transforms.functional import center_crop, resize
 from torchvision.transforms import InterpolationMode
 from PIL import Image
 import wandb
+import random
 
-def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, T: int, fps: int = 5, args=None, key=None):
+def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, fps: int = 5, args=None, key=None):
+# def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, T: int, fps: int = 5, args=None, key=None):
     os.makedirs(save_path, exist_ok=True)
 
     for i, vid in enumerate(video_batch):
@@ -24,14 +26,15 @@ def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, T: int
             frame = rearrange(frame, "c h w -> h w c")
             frame = (255.0 * frame).cpu().numpy().astype(np.uint8)
             gif_frames.append(frame)
-        now_save_path = os.path.join(save_path, f"{i:06d}.mp4")
+        # now_save_path = os.path.join(save_path, f"{i:06d}.mp4")
+        now_save_path = os.path.join(save_path, f"annot.mp4")
         with imageio.get_writer(now_save_path, fps=fps) as writer:
             for frame in gif_frames:
                 writer.append_data(frame)
-        if args is not None and args.wandb:
-            wandb.log(
-                {key + f"_video_{i}": wandb.Video(now_save_path, fps=fps, format="mp4")}, step=args.iteration + 1
-            )
+        # if args is not None and args.wandb:
+        #     wandb.log(
+        #         {key + f"_video_{i}": wandb.Video(now_save_path, fps=fps, format="mp4")}, step=args.iteration + 1
+        #     )
 
 
 def resize_for_rectangle_crop(arr, image_size, reshape_mode="random"):
@@ -111,7 +114,7 @@ def write_noise_masks(noise_masks, output_dir='noise_masks', prefix=''):
 
     print(f"Noise masks saved in {output_dir}")
 
-def add_noised_conditions_to_frames(image, bbox_tensor, pose_tensor, noise_mode='bbox', joint_encodings=None, player_encodings=None):
+def add_noised_conditions_to_frames(image, bbox_tensor, pose_tensor, noise_mode='bbox', joint_encodings=None, player_encodings=None, condition_dropout=None, inference=False):
     """
     Injects Gaussian noise into each frame of the image based on the bounding boxes and/or pose keypoints,
     excluding the first frame which retains the reference image with added noise.
@@ -119,8 +122,23 @@ def add_noised_conditions_to_frames(image, bbox_tensor, pose_tensor, noise_mode=
     """
     B, C, T, H, W = image.shape  # Assuming image shape is [B, C, T, H, W]
     _, _, N, _ = bbox_tensor.shape  # N is the number of bounding boxes per frame
-    _, _, _, K, _ = pose_tensor.shape  # K is the number of keypoints per player
+    if pose_tensor == None:
+        noise_mode = None
+    else:
+        _, _, Np, K, _ = pose_tensor.shape  # K is the number of keypoints per player
+    
+    # player-level 2, 4, 6
+    if not inference:
+        player_dropout_number = 6
+        if random.random() < condition_dropout:
+            indices_to_drop = torch.randperm(N, device=bbox_tensor.device)[:player_dropout_number]
+            
+            bbox_tensor = torch.index_select(bbox_tensor, 2, torch.tensor([i for i in range(N) if i not in indices_to_drop], device=bbox_tensor.device))
+            _, _, N, _ = bbox_tensor.shape
 
+            indices_to_drop_p = torch.randperm(Np, device=pose_tensor.device)[:player_dropout_number]
+            
+            pose_tensor = torch.index_select(pose_tensor, 2, torch.tensor([i for i in range(Np) if i not in indices_to_drop_p], device=pose_tensor.device))
     # Initialize a tensor to store noise masks
     noise_masks = torch.zeros_like(image)
 
@@ -135,6 +153,10 @@ def add_noised_conditions_to_frames(image, bbox_tensor, pose_tensor, noise_mode=
     # Only add Gaussian noise to frames after the first
     for b in range(B):
         for t in range(1, T):
+            # # frame-level
+            # if condition_dropout and random.random() < condition_dropout:
+            #     continue
+
             if noise_mode in ('bbox', 'both'):
                 # Process bounding boxes
                 bboxes = bbox_tensor[b, t]  # Shape: [N, 4]
@@ -314,6 +336,82 @@ def draw_annotations(samples, batch, draw_bbox=True, draw_pose=True):
                 if draw_pose:
                     # Get poses
                     poses = batch['pose'][b, t]  # Shape: [N, K, 2]
+                    for n in range(N):
+                        keypoints = poses[n]  # Shape: [K, 2]
+                        for k in range(K):
+                            x_norm, y_norm = keypoints[k].cpu().numpy()
+                            # Skip invalid keypoints
+                            if x_norm == 0 and y_norm == 0:
+                                continue
+                            x = int(x_norm * W)
+                            y = int(y_norm * H)
+                            # Ensure coordinates are within image bounds
+                            x = max(0, min(W - 1, x))
+                            y = max(0, min(H - 1, y))
+                            # Draw circle on frame_np
+                            cv2.circle(frame_np, (x, y), radius=3, color=(0, 0, 255), thickness=-1)
+
+                # Convert from BGR back to RGB
+                frame_np = cv2.cvtColor(frame_np, cv2.COLOR_BGR2RGB)
+                # Convert frame_np back to tensor
+                frame_tensor = torch.from_numpy(frame_np.astype(np.float32).transpose(2, 0, 1) / 127.5 - 1.0).to(samples.device)
+                samples_with_annotations[b, t] = frame_tensor
+
+        return samples_with_annotations
+
+def draw_annotations_infer(samples, bbox_o, pose_o, draw_bbox=True, draw_pose=True):
+        """
+        Draws bounding boxes and/or pose annotations on the decoded video samples.
+
+        Args:
+            samples (Tensor): Decoded video samples of shape [B, T, C, H, W].
+            batch (Dict): Batch dictionary containing 'bbox' and 'pose'.
+            draw_bbox (bool): Whether to draw bounding boxes.
+            draw_pose (bool): Whether to draw pose keypoints.
+
+        Returns:
+            Tensor: Video samples with annotations drawn, same shape as input samples.
+        """
+        B, T, C, H, W = samples.shape
+        N = bbox_o.shape[2]  # Number of bounding boxes per frame
+        K = pose_o.shape[3]  # Number of keypoints per player
+        samples_with_annotations = samples.clone()
+
+        for b in range(B):
+            for t in range(T):
+                frame = samples[b, t]  # Shape: [C, H, W]
+                # Convert frame to numpy array
+                frame_np = frame.cpu().numpy().transpose(1, 2, 0)  # [H, W, C]
+                # Convert from [-1, 1] to [0, 255]
+                frame_np = ((frame_np + 1.0) * 127.5).astype(np.uint8)
+                # Convert from RGB to BGR for OpenCV
+                frame_np = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+
+                if draw_bbox:
+                    # Get bounding boxes
+
+                    bboxes = bbox_o[b, t]  # Shape: [N, 4]
+                    for n in range(N):
+                        bbox = bboxes[n]  # [4]
+                        x1_norm, y1_norm, x2_norm, y2_norm = bbox.cpu().numpy()
+                        # Skip invalid bounding boxes
+                        if (x1_norm == x2_norm) and (y1_norm == y2_norm):
+                            continue
+                        x1 = int(x1_norm * W)
+                        y1 = int(y1_norm * H)
+                        x2 = int(x2_norm * W)
+                        y2 = int(y2_norm * H)
+                        # Ensure coordinates are within image bounds
+                        x1 = max(0, min(W - 1, x1))
+                        y1 = max(0, min(H - 1, y1))
+                        x2 = max(0, min(W - 1, x2))
+                        y2 = max(0, min(H - 1, y2))
+                        # Draw rectangle on frame_np
+                        cv2.rectangle(frame_np, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
+
+                if draw_pose:
+                    # Get poses
+                    poses = pose[b, t]  # Shape: [N, K, 2]
                     for n in range(N):
                         keypoints = poses[n]  # Shape: [K, 2]
                         for k in range(K):

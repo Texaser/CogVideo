@@ -2,7 +2,7 @@ args:
   image2video: True # True for image2video, False for text2video
   latent_channels: 16
   mode: inference
-  load: "/mnt/mir/fan23j/CogVideo/sat/ckpts_5b_lora/5b-lora-i2v-player-encodings-10-02-13-44" # This is for Full model without lora adapter
+  load: "/mnt/bum/hanyi/repo/CogVideo/sat/ckpts_5b_lora/5b-lora-i2v-player-level-0.05-6-10-19-02-46" # This is for Full model without lora adapter
   # load: "{your lora folder} such as zRzRzRzRzRzRzR/lora-disney-08-20-13-28" # This is for Full model without lora adapter
   batch_size: 1
   input_type: txt
@@ -13,9 +13,10 @@ args:
   noised_image_input: True
   noise_last_frame: True
   noise_mode: pose # bbox, pose, or both
+  player_dropout_number: 10
 #  fp16: True # For CogVideoX-2B
   bf16: True # For CogVideoX-5B and CoGVideoX-5B-I2V
-  output_dir: results/5b-lora-i2v-player-encodings-10-02-13-44/10000
+  output_dir: results/5b-lora-i2v-player-level-0.05-6-10-19-02-46/10
   force_inference: True
   # joint_encodings: None
   # player_encodings: None
@@ -38,15 +39,15 @@ args:
   #       [0.5, 0.5, 1],  # Left Ankle
   #       [1, 0.5, 0.5]   # Right Ankle
   #   ]
-  player_encodings: [
-      [1, 0, 0],
-      [0, 1, 0],
-      [0, 0, 1],
-      [1, 1, 0], 
-      [1, 0, 1], 
-      [0, 1, 1],
-      [1, 1, 1], 
-      [1, 0.5, 0],
-      [0, 0.5, 1],
-      [0.5, 1, 0.5],
-    ]
+  # player_encodings: [
+  #     [1, 0, 0],
+  #     [0, 1, 0],
+  #     [0, 0, 1],
+  #     [1, 1, 0], 
+  #     [1, 0, 1], 
+  #     [0, 1, 1],
+  #     [1, 1, 1], 
+  #     [1, 0.5, 0],
+  #     [0, 0.5, 1],
+  #     [0.5, 1, 0.5],
+  #   ]

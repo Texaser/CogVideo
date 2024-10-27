@@ -382,8 +382,8 @@ class SFTDataset(Dataset):
         
         total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
                           for filename in filenames if filename.endswith(".json"))
-        with open("/mnt/bum/hanyi/repo/CogVideo/sat/configs/prompt.json", "r") as f:
-            captions = json.load(f)
+        # with open("/mnt/bum/hanyi/repo/CogVideo/sat/configs/prompt.json", "r") as f:
+        #     captions = json.load(f)
         with tqdm(total=total_files, desc="Loading Data") as pbar:
             for root, dirnames, filenames in os.walk(data_dir):
                 for filename in filenames:
@@ -397,12 +397,12 @@ class SFTDataset(Dataset):
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)
 
-                        caption = captions[video_path]
+                        # caption = captions[video_path]
                         # prompt = "Please describe this video in detail."
                         # temperature = 0.1
                         # video_data = open(video_path, 'rb').read()
                         # caption = predict(prompt, video_data, temperature)
-                        # caption = data['caption']
+                        caption = data['caption']
                         self.captions.append(caption)
                         # with open('/mnt/bum/hanyi/repo/CogVideo/sat/configs/captions.txt', 'a') as f:
                         #     f.write(f"{caption}@@{video_path}\n")

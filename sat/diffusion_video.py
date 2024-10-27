@@ -67,6 +67,7 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noised_image_input = model_config.get("noised_image_input", False)
         self.noised_image_all_concat = model_config.get("noised_image_all_concat", False)
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
+        self.condition_dropout = model_config.get("condition_dropout", 0.0)
         self.noise_last_frame = model_config.get("noise_last_frame", False)
         self.joint_encodings = model_config.get("joint_encodings", None)
         self.player_encodings = model_config.get("player_encodings", None)
@@ -179,11 +180,18 @@ class SATVideoDiffusionEngine(nn.Module):
                     dtype=image.dtype
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
-
             # Add noise based on the selected noise_mode
+
+            # # clip-level
+            # if random.random() < self.condition_dropout:
+            #     batch['bbox'] = None
+            #     batch['pose'] = None
+            
+
             image, noise_masks = add_noised_conditions_to_frames(
                 image, batch['bbox'], batch['pose'], noise_mode=self.noise_mode, 
-                joint_encodings=self.joint_encodings, player_encodings=self.player_encodings
+                joint_encodings=self.joint_encodings, player_encodings=self.player_encodings,
+                condition_dropout=self.condition_dropout
             )
 
             # Encode the noised image
@@ -377,7 +385,8 @@ class SATVideoDiffusionEngine(nn.Module):
             # Add noise based on the selected noise_mode
             image, noise_masks = add_noised_conditions_to_frames(
                 image, batch['bbox'], batch['pose'], noise_mode=self.noise_mode, 
-                joint_encodings=self.joint_encodings, player_encodings=self.player_encodings
+                joint_encodings=self.joint_encodings, player_encodings=self.player_encodings,
+                condition_dropout=self.condition_dropout
             )
 
             # Encode the noised image
