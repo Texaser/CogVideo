@@ -545,8 +545,8 @@ class SATVideoDiffusionEngine(nn.Module):
         Returns:
             Tensor: Video samples with segmentation overlays, same shape as input samples
         """
-        B, C, T, H, W = samples.shape
-        num_objects = batch['mask'].shape[1]
+        B, T, C, H, W = samples.shape
+        num_objects = batch['mask'].shape[2]
 
         # Define colors for different objects (in BGR format for OpenCV)
         colors = [
