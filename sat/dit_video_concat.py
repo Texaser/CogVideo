@@ -182,6 +182,7 @@ class Basic3DPositionEmbeddingMixin(BaseMixin):
         compressed_num_frames,
         hidden_size,
         text_length=0,
+        frame_length=0,
         height_interpolation=1.0,
         width_interpolation=1.0,
         time_interpolation=1.0,
@@ -189,12 +190,12 @@ class Basic3DPositionEmbeddingMixin(BaseMixin):
         super().__init__()
         self.height = height
         self.width = width
-        self.text_length = text_length
+        self.text_length = text_length + frame_length
         self.compressed_num_frames = compressed_num_frames
         self.spatial_length = height * width
         self.num_patches = height * width * compressed_num_frames
         self.pos_embedding = nn.Parameter(
-            torch.zeros(1, int(text_length + self.num_patches), int(hidden_size)), requires_grad=False
+            torch.zeros(1, int(self.text_length + self.num_patches), int(hidden_size)), requires_grad=False
         )
         self.height_interpolation = height_interpolation
         self.width_interpolation = width_interpolation
@@ -432,6 +433,32 @@ class SwiGLUMixin(BaseMixin):
         hidden = origin.activation_func(x2) * x1
         x = origin.dense_4h_to_h(hidden)
         return x
+
+class RepaMLP(BaseMixin):
+    def __init__(self, hidden_size, projector_dim, z_dim, num_align_layers):
+        super().__init__()
+        self.num_align_layers = num_align_layers
+        self.projection_heads = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_size, projector_dim),
+                nn.SiLU(),
+                nn.Linear(projector_dim, projector_dim),
+                nn.SiLU(),
+                nn.Linear(projector_dim, z_dim),
+            ) for _ in range(num_align_layers)
+        ])
+
+    def forward(self, output):
+        model_output = output[0]
+        hidden_states = output[1:]
+        zs_tilde = []
+        
+        for i, h_t in enumerate(hidden_states[:self.num_align_layers]):
+            projected_h_t = self.projection_heads[i](h_t['hidden_states'])
+            zs_tilde.append(projected_h_t)
+        
+        # Restack tensor
+        return [model_output] + zs_tilde
 
 
 class AdaLNMixin(BaseMixin):
@@ -767,13 +794,21 @@ class DiffusionTransformer(BaseModel):
             lora_config = module_configs["lora_config"]
             self.add_mixin("lora", instantiate_from_config(lora_config, layer_num=self.num_layers), reinit=True)
 
+        if "repa_mlp_config" in module_configs:
+            repa_mlp_config = module_configs["repa_mlp_config"]
+            self.add_mixin(
+                "repa_mlp",
+                instantiate_from_config(
+                    repa_mlp_config,
+                ),
+                reinit=True,
+            )
         return
 
     def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
         b, t, d, h, w = x.shape
         if x.dtype != self.dtype:
             x = x.to(self.dtype)
-
         # This is not use in inference
         if "concat_images" in kwargs and kwargs["concat_images"] is not None:
             if kwargs["concat_images"].shape[0] != x.shape[0]:
@@ -799,7 +834,11 @@ class DiffusionTransformer(BaseModel):
         kwargs["emb"] = emb
         kwargs["encoder_outputs"] = context
         kwargs["text_length"] = context.shape[1]
+        kwargs["output_hidden_states"] = True
 
         kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
-        output = super().forward(**kwargs)[0]
+        output = super().forward(**kwargs)
+
+        if self.mixins.repa_mlp is not None:
+            output = self.mixins.repa_mlp(output)
         return output

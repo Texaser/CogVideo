@@ -18,7 +18,9 @@ from torchvision.transforms import InterpolationMode
 import decord
 from decord import VideoReader
 from torch.utils.data import Dataset
-
+from tqdm import tqdm
+import json
+import time
 
 def read_video(
     filename: str,
@@ -113,21 +115,18 @@ def read_video(
 
 
 def resize_for_rectangle_crop(arr, image_size, reshape_mode="random"):
+    original_height, original_width = arr.shape[2], arr.shape[3]
     if arr.shape[3] / arr.shape[2] > image_size[1] / image_size[0]:
-        arr = resize(
-            arr,
-            size=[image_size[0], int(arr.shape[3] * image_size[0] / arr.shape[2])],
-            interpolation=InterpolationMode.BICUBIC,
-        )
+        scale = image_size[0] / arr.shape[2]
+        new_height = image_size[0]
+        new_width = int(arr.shape[3] * scale)
     else:
-        arr = resize(
-            arr,
-            size=[int(arr.shape[2] * image_size[1] / arr.shape[3]), image_size[1]],
-            interpolation=InterpolationMode.BICUBIC,
-        )
+        scale = image_size[1] / arr.shape[3]
+        new_width = image_size[1]
+        new_height = int(arr.shape[2] * scale)
 
+    arr = resize(arr, size=[new_height, new_width], interpolation=InterpolationMode.BICUBIC)
     h, w = arr.shape[2], arr.shape[3]
-    arr = arr.squeeze(0)
 
     delta_h = h - image_size[0]
     delta_w = w - image_size[1]
@@ -139,8 +138,11 @@ def resize_for_rectangle_crop(arr, image_size, reshape_mode="random"):
         top, left = delta_h // 2, delta_w // 2
     else:
         raise NotImplementedError
+
     arr = TT.functional.crop(arr, top=top, left=left, height=image_size[0], width=image_size[1])
-    return arr
+
+    return arr, scale, top, left, original_width, original_height
+
 
 
 def pad_last_frame(tensor, num_frames):
@@ -370,19 +372,38 @@ class SFTDataset(Dataset):
 
         self.video_paths = []
         self.captions = []
+        self.tracklets = []
+        self.pose_tracklets = []  # New list to store pose tracklets
 
-        for root, dirnames, filenames in os.walk(data_dir):
-            for filename in filenames:
-                if filename.endswith(".mp4"):
-                    video_path = os.path.join(root, filename)
-                    self.video_paths.append(video_path)
+        start_time = time.time()
+        
+        total_files = sum(1 for root, _, filenames in os.walk(data_dir) 
+                          for filename in filenames if filename.endswith(".json"))
 
-                    caption_path = video_path.replace(".mp4", ".txt").replace("videos", "labels")
-                    if os.path.exists(caption_path):
-                        caption = open(caption_path, "r").read().splitlines()[0]
-                    else:
-                        caption = ""
-                    self.captions.append(caption)
+        with tqdm(total=total_files, desc="Loading Data") as pbar:
+            for root, dirnames, filenames in os.walk(data_dir):
+                for filename in filenames:
+                    if filename.endswith(".json"):
+                        with open(os.path.join(root, filename), "r") as f:
+                            data = json.load(f)
+                        # TODO: fix path in annotations
+                        video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
+                        self.video_paths.append(video_path)
+
+                        caption = data['caption']
+                        self.captions.append(caption)
+
+                        bounding_boxes = data['bounding_boxes']
+                        trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
+                        self.tracklets.append(trajectory_data)
+                        self.pose_tracklets.append(keypoints_data)  # Store the pose data
+
+                        pbar.update(1)
+
+        end_time = time.time()
+        loading_time = end_time - start_time
+        print(f"\nData loading completed in {loading_time:.2f} seconds.")
+        print(f"Loaded {len(self.video_paths)} video paths, and captions.")
 
     def __getitem__(self, index):
         decord.bridge.set_bridge("torch")
@@ -392,57 +413,111 @@ class SFTDataset(Dataset):
         actual_fps = vr.get_avg_fps()
         ori_vlen = len(vr)
 
-        if ori_vlen / actual_fps * self.fps > self.max_num_frames:
-            num_frames = self.max_num_frames
-            start = int(self.skip_frms_num)
-            end = int(start + num_frames / self.fps * actual_fps)
-            end_safty = min(int(start + num_frames / self.fps * actual_fps), int(ori_vlen))
-            indices = np.arange(start, end, (end - start) // num_frames).astype(int)
-            temp_frms = vr.get_batch(np.arange(start, end_safty))
-            assert temp_frms is not None
-            tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
-            tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-        else:
-            if ori_vlen > self.max_num_frames:
-                num_frames = self.max_num_frames
-                start = int(self.skip_frms_num)
-                end = int(ori_vlen - self.skip_frms_num)
-                indices = np.arange(start, end, max((end - start) // num_frames, 1)).astype(int)
-                temp_frms = vr.get_batch(np.arange(start, end))
-                assert temp_frms is not None
-                tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
-                tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-            else:
-
-                def nearest_smaller_4k_plus_1(n):
-                    remainder = n % 4
-                    if remainder == 0:
-                        return n - 3
-                    else:
-                        return n - remainder + 1
-
-                start = int(self.skip_frms_num)
-                end = int(ori_vlen - self.skip_frms_num)
-                num_frames = nearest_smaller_4k_plus_1(end - start)  # 3D VAE requires the number of frames to be 4k+1
-                end = int(start + num_frames)
-                temp_frms = vr.get_batch(np.arange(start, end))
-                assert temp_frms is not None
-                tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
+        assert ori_vlen / actual_fps * self.fps > self.max_num_frames
+        num_frames = self.max_num_frames
+        start = int(self.skip_frms_num)
+        end = int(start + num_frames / self.fps * actual_fps)
+        end_safty = min(int(start + num_frames / self.fps * actual_fps), int(ori_vlen))
+        indices = np.arange(start, end, (end - start) // num_frames).astype(int)
+        temp_frms = vr.get_batch(np.arange(start, end_safty))
+        assert temp_frms is not None
+        tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
+        tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
+        tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
+        pose_frms = self.pose_tracklets[index][torch.tensor(indices.tolist())][:num_frames]  # Get pose data
 
         tensor_frms = pad_last_frame(
             tensor_frms, self.max_num_frames
         )  # the len of indices may be less than num_frames, due to round error
         tensor_frms = tensor_frms.permute(0, 3, 1, 2)  # [T, H, W, C] -> [T, C, H, W]
-        tensor_frms = resize_for_rectangle_crop(tensor_frms, self.video_size, reshape_mode="center")
+        tensor_frms, scale, top, left, orig_w, orig_h = resize_for_rectangle_crop(
+            tensor_frms, self.video_size, reshape_mode="center"
+        )
         tensor_frms = (tensor_frms - 127.5) / 127.5
-
+        tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
+        pose_frms = self.adjust_keypoints(pose_frms, scale, top, left, orig_w, orig_h)  # Adjust keypoints
         item = {
             "mp4": tensor_frms,
+            "bbox": tracklet_frms,
+            "pose": pose_frms,  # Include pose data in the item
             "txt": self.captions[index],
             "num_frames": num_frames,
             "fps": self.fps,
         }
         return item
+
+    def adjust_bounding_boxes(self, bounding_boxes, scale, top, left, orig_w, orig_h):
+        # Convert normalized coordinates to pixel coordinates in the original frame
+        bounding_boxes[:, :, 0] *= orig_w  # x1
+        bounding_boxes[:, :, 1] *= orig_h  # y1
+        bounding_boxes[:, :, 2] *= orig_w  # x2
+        bounding_boxes[:, :, 3] *= orig_h  # y2
+
+        # Apply scaling
+        bounding_boxes *= scale
+
+        # Apply cropping offsets
+        bounding_boxes[:, :, [0, 2]] -= left
+        bounding_boxes[:, :, [1, 3]] -= top
+
+        # Convert back to normalized coordinates in the new frame size
+        bounding_boxes[:, :, 0] /= self.video_size[1]  # x1
+        bounding_boxes[:, :, 1] /= self.video_size[0]  # y1
+        bounding_boxes[:, :, 2] /= self.video_size[1]  # x2
+        bounding_boxes[:, :, 3] /= self.video_size[0]  # y2
+
+        # Clip values to [0, 1]
+        bounding_boxes = bounding_boxes.clip(0, 1)
+
+        return bounding_boxes
+
+    def adjust_keypoints(self, keypoints, scale, top, left, orig_w, orig_h):
+        # Convert normalized coordinates to pixel coordinates in the original frame
+        keypoints[:, :, :, 0] *= orig_w  # x
+        keypoints[:, :, :, 1] *= orig_h  # y
+
+        # Apply scaling
+        keypoints *= scale
+
+        # Apply cropping offsets
+        keypoints[:, :, :, 0] -= left
+        keypoints[:, :, :, 1] -= top
+
+        # Convert back to normalized coordinates in the new frame size
+        keypoints[:, :, :, 0] /= self.video_size[1]  # x
+        keypoints[:, :, :, 1] /= self.video_size[0]  # y
+
+        # Clip values to [0, 1]
+        keypoints = keypoints.clamp(0, 1)
+
+        return keypoints
+
+    def encode_bbox_tracklet(self, bounding_boxes):
+        num_frames = len(bounding_boxes)
+        num_players = 10
+        num_keypoints = 17
+
+        trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
+        keypoints_data = [[[[0, 0] for _ in range(num_keypoints)] for _ in range(num_players)] for _ in range(num_frames)]
+
+        for frame_idx, frame in enumerate(bounding_boxes):
+            assert len(frame['bounding_box_instances']) == num_players
+            for player_idx, box in enumerate(frame['bounding_box_instances']):
+                if box is not None:
+                    trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
+                    if 'keypoints' in box and box['keypoints']:
+                        keypoints = box['keypoints']
+                        if len(keypoints) == 0:
+                            # pad with zeros
+                            keypoints_xy = [[0, 0] for _ in range(num_keypoints)]
+                        else:
+                            keypoints_xy = [[kp[0], kp[1]] for kp in keypoints]
+                        keypoints_data[frame_idx][player_idx] = keypoints_xy
+
+        # Convert to tensors
+        trajectory_data = torch.tensor(trajectory_data, dtype=torch.float16)
+        keypoints_data = torch.tensor(keypoints_data, dtype=torch.float16)
+        return trajectory_data, keypoints_data
 
     def __len__(self):
         return len(self.video_paths)

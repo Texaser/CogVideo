@@ -35,7 +35,8 @@ class Denoiser(nn.Module):
         sigma = append_dims(sigma, input.ndim)
         c_skip, c_out, c_in, c_noise = self.scaling(sigma, **additional_model_inputs)
         c_noise = self.possibly_quantize_c_noise(c_noise.reshape(sigma_shape))
-        return network(input * c_in, c_noise, cond, **additional_model_inputs) * c_out + input * c_skip
+        model_output = network(input * c_in, c_noise, cond, **additional_model_inputs)
+        return model_output[0] * c_out + input * c_skip, model_output[1:]
 
 
 class DiscreteDenoiser(Denoiser):

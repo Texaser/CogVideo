@@ -3,7 +3,7 @@ from typing import List, Optional, Union
 import torch
 import torch.nn as nn
 from omegaconf import ListConfig
-from ...util import append_dims, instantiate_from_config
+from ...util import append_dims, instantiate_from_config, mean_flat
 from ...modules.autoencoding.lpips.loss.lpips import LPIPS
 from sat import mpu
 
@@ -103,12 +103,24 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
             cond["concat"] = batch["concat_images"]
 
         # [2, 13, 16, 60, 90],[2] dict_keys(['crossattn', 'concat'])  dict_keys(['idx'])
-        model_output = denoiser(network, noised_input, alphas_cumprod_sqrt, cond, **additional_model_inputs)
+        model_output, zs_tilde = denoiser(network, noised_input, alphas_cumprod_sqrt, cond, **additional_model_inputs)
+        zs = batch['repa']
+
+        # projection loss
+        proj_loss = 0.
+        bsz = zs[0].shape[0]
+        for i, (z, z_tilde) in enumerate(zip(zs, zs_tilde)):
+            for j, (z_j, z_tilde_j) in enumerate(zip(z, z_tilde)):
+                z_tilde_j = torch.nn.functional.normalize(z_tilde_j, dim=-1) 
+                z_j = torch.nn.functional.normalize(z_j, dim=-1) 
+                proj_loss += mean_flat(-(z_j * z_tilde_j).sum(dim=-1))
+        proj_loss /= (len(zs) * bsz)
+
         w = append_dims(1 / (1 - alphas_cumprod_sqrt**2), input.ndim)  # v-pred
 
         if self.min_snr_value is not None:
             w = min(w, self.min_snr_value)
-        return self.get_loss(model_output, input, w)
+        return self.get_loss(model_output, input, w) + proj_loss
 
     def get_loss(self, model_output, target, w):
         if self.type == "l2":
