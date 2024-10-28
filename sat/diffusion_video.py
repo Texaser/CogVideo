@@ -141,8 +141,8 @@ class SATVideoDiffusionEngine(nn.Module):
             
         if self.pixel_space_loss:
             # Get segmentation tensor from batch
-            segm_tensor = batch['segm']  # Expected shape: [B, 10, T, H, W]
-            B, num_objects, T, H, W = segm_tensor.shape
+            segm_tensor = batch['mask'] 
+            B, T, num_objects, H, W = segm_tensor.shape
                 
             # Calculate x0_pred from v-prediction
             sigma_t = (1 - alphas_cumprod_sqrt**2) ** 0.5
@@ -160,12 +160,12 @@ class SATVideoDiffusionEngine(nn.Module):
             # Create visualization tensors
             seg_viz_pred = torch.zeros_like(x_hat)
             seg_viz_target = torch.zeros_like(x_noised)
-            
+
             # Compute loss only within segmentation masks
             for b in range(B):
                 for t in range(T):
                     for obj_idx in range(num_objects):
-                        mask = segm_tensor[b, obj_idx, t]  # [H, W]
+                        mask = segm_tensor[b, t, obj_idx]  # [H, W]
                         
                         if not torch.any(mask):
                             continue
@@ -179,7 +179,7 @@ class SATVideoDiffusionEngine(nn.Module):
                             target * mask.unsqueeze(0),
                             reduction='sum'
                         )
-                        valid_seg_count += mask.sum().item() * C
+                        valid_seg_count += mask.sum().item() * pred.shape[0]
                             
                         # Store masked regions for visualization
                         seg_viz_pred[b, :, t] += pred * mask.unsqueeze(0)

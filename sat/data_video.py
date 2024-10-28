@@ -394,7 +394,7 @@ class SFTDataset(Dataset):
                         # Get video ID from path to locate corresponding mask folder
                         mask_base_path = video_path.replace(
                             '/mnt/mir/levlevi/hq-basketball-dataset/filtered-clips-aggressive-thresh/',
-                            '/mnt/mir/fan23j/data/hq-poses-strict-sam/'
+                            '/mnt/bum/hanyi/data/hq-pose-sam/hq-poses/'
                         )
                         mask_base_path = os.path.splitext(mask_base_path)[0]  # Remove .mp4 extension
 

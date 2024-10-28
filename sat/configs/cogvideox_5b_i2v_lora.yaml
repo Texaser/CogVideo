@@ -6,8 +6,8 @@ model:
   noised_image_dropout: 0.05
   noise_last_frame: true
   not_trainable_prefixes: ['all'] ## Using Lora
-  pixel_space_loss: false
-  use_color_conditions: true
+  pixel_space_loss: true
+  use_color_conditions: false
   
   log_keys:
     - txt

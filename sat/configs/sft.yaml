@@ -1,7 +1,7 @@
 args:
   checkpoint_activations: True # using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 5b-lora-i2v-segm-color
+  experiment_name: 5b-lora-i2v-pixel-segm
   mode: finetune
   load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
   no_load_rng: True
@@ -12,7 +12,7 @@ args:
   save: ckpts_5b_lora
   save_interval: 5000
   log_interval: 20
-  train_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Train data path
+  train_data: [ "/mnt/mir/fan23j/data/hq-poses" ] # Train data path
   valid_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
   num_workers: 8
