@@ -264,7 +264,6 @@ class SATVideoDiffusionEngine(nn.Module):
             for t in range(1, T):
                 # Start with a black frame
                 colored_frame = torch.zeros((C, H, W), device=image.device, dtype=image.dtype)
-                
                 # Add each player's colored mask
                 for obj_idx in range(num_objects):
                     mask = segm_tensor[b, t, obj_idx]  # [H, W]
@@ -273,14 +272,13 @@ class SATVideoDiffusionEngine(nn.Module):
                         continue
                     
                     # Get color for this player from colormap
-                    color = torch.tensor(cmap(obj_idx)[:3], device=image.device, dtype=image.dtype)
-                    
+                    color = torch.tensor(cmap(obj_idx)[:3], device=image.device, dtype=image.dtype) * 2 - 1
+
                     # Add colored mask to frame
                     for c in range(C):
-                        colored_frame[c] += mask * color[c]
-                
+                        colored_frame[c] = mask * color[c]
                 # Scale colors to [-1, 1] range and assign to image
-                image[b, :, t] = 2 * colored_frame - 1
+                image[b, :, t] = colored_frame.clamp(-1, 1)
 
         return image, None
 

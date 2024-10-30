@@ -8,11 +8,9 @@
 
 set -e  # exit script if any command fails
 
-cd /mnt/mir/fan23j/CogVideo/sat
-
 # find this path using `which conda`
-CONDA_PATH="/home/fan23j/anaconda3/"
-VENV_NAME="cogvideo"
+CONDA_PATH="/home/hanyi/miniconda3/"
+VENV_NAME="cog"
 
 source "${CONDA_PATH}/etc/profile.d/conda.sh"
 conda activate "${VENV_NAME}"
@@ -22,7 +20,7 @@ export PYTHONWARNINGS="ignore"
 export CUDA_LAUNCH_BLOCKING=1
 
 # TODO: change to the device(s) you wish to run on
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 
 TORCHRUN_OPTIONS=(
     --standalone

@@ -7,7 +7,7 @@ model:
   noise_last_frame: true
   not_trainable_prefixes: ['all'] ## Using Lora
   pixel_space_loss: false
-  use_color_conditions: true
+  use_color_conditions: True
   
   log_keys:
     - txt
