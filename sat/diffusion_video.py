@@ -276,11 +276,41 @@ class SATVideoDiffusionEngine(nn.Module):
 
                     # Add colored mask to frame
                     for c in range(C):
-                        colored_frame[c] = mask * color[c]
+                        colored_frame[c] += mask * color[c]
                 # Scale colors to [-1, 1] range and assign to image
                 image[b, :, t] = colored_frame.clamp(-1, 1)
 
         return image, None
+
+    def add_original_color_conditions_to_frames(self, image, segm_tensor, original_frames):
+        """
+        Instead of adding noise or distinct colors, encodes each player with the corresponding RGB values
+        from the original frames based on the segmentation mask.
+        """
+        B, C, T, H, W = image.shape
+        _, _, num_objects, _, _ = segm_tensor.shape  # [B, T, 10, H, W]
+        
+        # Only modify frames after the first one (keep first frame as reference)
+        for b in range(B):
+            for t in range(1, T):
+                # Start with a black frame
+                colored_frame = torch.zeros((C, H, W), device=image.device, dtype=image.dtype)
+                # Add each player's RGB values from the original frame
+                for obj_idx in range(num_objects):
+                    mask = segm_tensor[b, t, obj_idx]  # [H, W]
+                    
+                    if not torch.any(mask):
+                        continue
+                    
+                    # Apply the mask to get RGB values from the original frame
+                    for c in range(C):
+                        colored_frame[c] += mask * original_frames[b, c, t, :, :]
+                
+                # Assign the colored frame with original RGB values to the image tensor
+                image[b, :, t] = colored_frame.clamp(-1, 1)
+
+        return image, None
+
 
     def shared_step(self, batch: Dict) -> Any:
         x = self.get_input(batch)
@@ -314,7 +344,7 @@ class SATVideoDiffusionEngine(nn.Module):
                 image = torch.cat([image, subsequent_frames], dim=2)
 
             # Add noise based on segmentation masks
-            image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask']) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
+            image, noise_masks = self.add_original_color_conditions_to_frames(image, batch['mask'], x) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
 
             # Encode the noised image
             image = self.encode_first_stage(image, batch)
