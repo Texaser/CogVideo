@@ -424,7 +424,7 @@ class SFTDataset(Dataset):
         vr = VideoReader(uri=video_path, height=-1, width=-1)
         actual_fps = vr.get_avg_fps()
         ori_vlen = len(vr)
-
+        import pudb; pudb.set_trace();
         assert ori_vlen / actual_fps * self.fps > self.max_num_frames
         num_frames = self.max_num_frames
         start = int(self.skip_frms_num)

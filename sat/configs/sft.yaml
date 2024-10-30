@@ -1,7 +1,7 @@
 args:
   checkpoint_activations: True # using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 5b-lora-i2v-pose-caption
+  experiment_name: 5b-lora-i2v-pose-fps-30
   mode: finetune
   load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
   no_load_rng: True
@@ -25,7 +25,7 @@ data:
   target: data_video.SFTDataset
   params:
     video_size: [ 480, 720 ]
-    fps: 8
+    fps: 30
     max_num_frames: 49
     skip_frms_num: 3.
 
