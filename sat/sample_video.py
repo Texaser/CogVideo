@@ -150,6 +150,7 @@ def sampling_main(args, model_cls):
                     
                     joint_encodings = args.joint_encodings if args.joint_encodings else None
                     player_encodings = args.player_encodings if args.player_encodings else None
+                    uncond = image
                     image, noise_masks = add_noised_conditions_to_frames(
                         image, bbox, pose, noise_mode=args.noise_mode, 
                         joint_encodings=joint_encodings, 
@@ -163,6 +164,8 @@ def sampling_main(args, model_cls):
                 # image = image.unsqueeze(2).to(torch.bfloat16)
                 image = model.encode_first_stage(image, None)
                 image = image.permute(0, 2, 1, 3, 4).contiguous()
+                uncond = model.encode_first_stage(uncond, None)
+                uncond = uncond.permute(0, 2, 1, 3, 4).contiguous()
                 # pad_shape = (image.shape[0], T - 1, C, H // F, W // F)
                 # image = torch.concat([image, torch.zeros(pad_shape).to(image.device).to(image.dtype)], dim=1)
             else:
@@ -196,7 +199,7 @@ def sampling_main(args, model_cls):
 
             if args.image2video and image is not None:
                 c["concat"] = image
-                uc["concat"] = image
+                uc["concat"] = uncond
 
             for index in range(args.batch_size):
                 # reload model on GPU
