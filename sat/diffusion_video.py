@@ -146,11 +146,12 @@ class SATVideoDiffusionEngine(nn.Module):
                 
             # Calculate x0_pred from v-prediction
             sigma_t = (1 - alphas_cumprod_sqrt**2) ** 0.5
-            x0_pred = (noised_input - sigma_t * model_output) / alphas_cumprod_sqrt
+            #x0_pred = (noised_input - sigma_t * model_output) / alphas_cumprod_sqrt
+            pred_noised = alphas_cumprod_sqrt * x + sigma_t * model_output
                 
             # Decode predictions and noised input
-            x0_pred = x0_pred.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype)
-            x_hat = self.decode_first_stage(x0_pred)
+            #x0_pred = x0_pred.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype)
+            x_hat = self.decode_first_stage(pred_noised.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
             x_noised = self.decode_first_stage(noised_input.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
                 
             # Initialize tensor to accumulate segmentation-based losses
@@ -158,8 +159,8 @@ class SATVideoDiffusionEngine(nn.Module):
             valid_seg_count = 0
                 
             # Create visualization tensors
-            seg_viz_pred = torch.zeros_like(x_hat)
-            seg_viz_target = torch.zeros_like(x_noised)
+            # seg_viz_pred = torch.zeros_like(x_hat)
+            # seg_viz_target = torch.zeros_like(x_noised)
 
             # Compute loss only within segmentation masks
             for b in range(B):
@@ -182,8 +183,8 @@ class SATVideoDiffusionEngine(nn.Module):
                         valid_seg_count += mask.sum().item() * pred.shape[0]
                             
                         # Store masked regions for visualization
-                        seg_viz_pred[b, :, t] += pred * mask.unsqueeze(0)
-                        seg_viz_target[b, :, t] += target * mask.unsqueeze(0)
+                        # seg_viz_pred[b, :, t] += pred * mask.unsqueeze(0)
+                        # seg_viz_target[b, :, t] += target * mask.unsqueeze(0)
                 
             # Compute average loss over all valid segmentation regions
             if valid_seg_count > 0:
@@ -224,7 +225,7 @@ class SATVideoDiffusionEngine(nn.Module):
 
         # Only add Gaussian noise to frames after the first
         for b in range(B):
-            for t in range(1, T):
+            for t in range(1, T-1):
                 # Process segmentation masks for each object
                 for obj_idx in range(num_objects):
                     # Get segmentation mask for current object
