@@ -387,6 +387,13 @@ class SFTDataset(Dataset):
                     if filename.endswith(".json"):
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
+                            
+                        caption = data['caption']
+                        # filter free throw actions
+                        # if caption not in ("A basketball player making a free throw", "A basketball player missing a free throw"):
+                        #     continue
+                        self.captions.append(caption)
+
                         # TODO: fix path in annotations
                         video_path = data["video_path"].replace("/playpen-storage", "/mnt/mir")
                         self.video_paths.append(video_path)
@@ -412,8 +419,7 @@ class SFTDataset(Dataset):
                         
                         if not all_masks_exist:
                             continue
-                        caption = data['caption']
-                        self.captions.append(caption)
+
 
                        # bounding_boxes = data['bounding_boxes']
                        #trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)

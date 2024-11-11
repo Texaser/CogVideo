@@ -2,10 +2,10 @@ model:
   scale_factor: 0.7
   disable_first_stage_autocast: true
   latent_input: false
-  noised_image_input: true
+  noised_image_input: true 
   noised_image_dropout: 0.05
   noise_last_frame: true
-  noise_mode: 'pose' # bbox, pose, or both
+  use_color_conditions: true
   log_keys:
     - txt
 
