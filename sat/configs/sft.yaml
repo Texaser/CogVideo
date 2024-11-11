@@ -1,7 +1,7 @@
 args:
   checkpoint_activations: True # using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 5b-lora-i2v-segm-rgb-gt-13k-fps-8
+  experiment_name: 5b-lora-i2v-segm-color-onegame-fps-30
   mode: finetune
   load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
   no_load_rng: True
@@ -12,10 +12,10 @@ args:
   save: ckpts_5b_lora
   save_interval: 5000
   log_interval: 20
-  train_data: [ "/mnt/mir/fan23j/data/hq-poses" ] # Train data path
-  valid_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Validation data path, can be the same as train_data(not recommended)
-  # train_data: [ "/mnt/mir/fan23j/data/hq-poses-strict/1038305_85_adelaide_36ers_89_new_zealand_breakers/period_1" ] # Validation data path, can be the same as train_data(not recommended)
-  # valid_data: [ "/mnt/mir/fan23j/data/hq-poses-strict/1038305_85_adelaide_36ers_89_new_zealand_breakers/period_1" ] # Validation data path, can be the same as train_data(not recommended)
+  train_data: [ "/mnt/mir/fan23j/data/hq-poses-one-game/train" ] # Train data path
+  valid_data: [ "/mnt/mir/fan23j/data/hq-poses-one-game/test" ] # Validation data path, can be the same as train_data(not recommended)
+  # train_data: [ "/mnt/bum/hanyi/data/test_folder" ] # Validation data path, can be the same as train_data(not recommended)
+  # valid_data: [ "/mnt/bum/hanyi/data/test_folder" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
   num_workers: 8
   force_train: True
@@ -25,7 +25,7 @@ data:
   target: data_video.SFTDataset
   params:
     video_size: [ 480, 720 ]
-    fps: 8
+    fps: 30
     max_num_frames: 49
     skip_frms_num: 3.
 

@@ -1,1 +1,3 @@
 A basketball player missing a three-point shot@@/mnt/bum/hanyi/data/hq-evaluation/three_pointer_missed/324110350_3-_570.345_0/324110350_3-_570.345_0_sample_first.jpg
+A basketball player missing a three-point shot@@/mnt/bum/hanyi/data/hq-evaluation/three_pointer_missed/328534953_3-_213.606_0/328534953_3-_213.606_0_sample_first.jpg
+A basketball player grabbing a rebound@@/mnt/bum/hanyi/data/hq-evaluation/rebound/338586845_rebound_562.872_0/338586845_rebound_562.872_0_sample_first.jpg

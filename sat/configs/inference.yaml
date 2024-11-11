@@ -2,7 +2,7 @@ args:
   image2video: True # True for image2video, False for text2video
   latent_channels: 16
   mode: inference
-  load: "/mnt/bum/hanyi/repo/CogVideo/sat/ckpts_5b_lora/5b-lora-i2v-pose-caption-10-09-21-57" # This is for Full model without lora adapter
+  load: "/mnt/bum/hanyi/repo/CogVideo/sat/ckpts_5b_lora/5b-lora-i2v-segm-rgb-gt-13k-fps-8-11-01-00-28" # This is for Full model without lora adapter
   # load: "{your lora folder} such as zRzRzRzRzRzRzR/lora-disney-08-20-13-28" # This is for Full model without lora adapter
   batch_size: 1
   input_type: txt
@@ -12,8 +12,7 @@ args:
   sampling_fps: 8
   noised_image_input: True
   noise_last_frame: True
-  noise_mode: pose # bbox, pose, or both
 #  fp16: True # For CogVideoX-2B
   bf16: True # For CogVideoX-5B and CoGVideoX-5B-I2V
-  output_dir: results/5b-lora-i2v-pose-caption-10-09-21-57
+  output_dir: results/5b-lora-i2v-segm-rgb-gt-13k-fps-8-11-01-00-28
   force_inference: True
