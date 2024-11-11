@@ -4,10 +4,10 @@ model:
   latent_input: false
   noised_image_input: true
   noised_image_dropout: 0.05
-  noise_last_frame: false
+  noise_last_frame: true
   not_trainable_prefixes: ['all'] ## Using Lora
   pixel_space_loss: true
-  use_color_conditions: false
+  use_color_conditions: true
   
   log_keys:
     - txt

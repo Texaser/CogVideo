@@ -1,19 +1,19 @@
 args:
   checkpoint_activations: True # using gradient checkpointing
   model_parallel_size: 1
-  experiment_name: 5b-lora-i2v-pixel-segm-no-last-frame
+  experiment_name: 5b-lora-i2v-pixel-segm-color-50
   mode: finetune
   load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
   no_load_rng: True
   train_iters: 10000 # Suggest more than 1000 For Lora and SFT For 500 is enough
   eval_iters: 1
-  eval_interval: 250
+  eval_interval: 500
   eval_batch_size: 1
-  save: ckpts_5b_lora
+  save: ckpts_5b_lora_new
   save_interval: 5000
   log_interval: 20
-  train_data: [ "/mnt/mir/fan23j/data/hq-poses" ] # Train data path
-  valid_data: [ "/mnt/mir/fan23j/data/hq-poses-strict" ] # Validation data path, can be the same as train_data(not recommended)
+  train_data: [ "/mnt/mir/fan23j/data/valid-50" ] # Train data path
+  valid_data: [ "/mnt/mir/fan23j/data/valid-50" ] # Validation data path, can be the same as train_data(not recommended)
   split: 1,0,0
   num_workers: 8
   force_train: True
@@ -25,7 +25,7 @@ data:
     video_size: [ 480, 720 ]
     fps: 30
     max_num_frames: 49
-    skip_frms_num: 3.
+    skip_frms_num: 0.
 
 deepspeed:
   # Minimum for 16 videos per batch for ALL GPUs, This setting is for 8 x A100 GPUs
