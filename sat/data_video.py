@@ -368,7 +368,7 @@ class SFTDataset(Dataset):
         self.video_size = video_size
         self.fps = fps
         self.max_num_frames = max_num_frames
-        self.skip_frms_num = []
+        self.skip_frms_num = skip_frms_num
 
         self.video_paths = []
         self.captions = []
@@ -389,12 +389,11 @@ class SFTDataset(Dataset):
                         caption = data['caption']
                         self.captions.append(caption)
 
-                        video_path = data["video_path"]
+                        video_path = data["mask_path"].replace("masks", "")+"clip.mp4"
                         self.video_paths.append(video_path)
 
                         # Get video ID from path to locate corresponding mask folder
                         mask_base_path = data['mask_path']
-                        self.skip_frms_num.append(data['starting_frame'])
                         # Check if all player masks exist
                         player_mask_paths = []
                         all_masks_exist = True
@@ -428,16 +427,17 @@ class SFTDataset(Dataset):
 
         assert ori_vlen / actual_fps * self.fps > self.max_num_frames
         num_frames = self.max_num_frames
-        start = int(self.skip_frms_num[index])
+        start = int(self.skip_frms_num)
         end = int(start + num_frames / self.fps * actual_fps)
         end_safty = min(int(start + num_frames / self.fps * actual_fps), int(ori_vlen))
         indices = np.arange(start, end, (end - start) // num_frames).astype(int)
         temp_frms = vr.get_batch(np.arange(start, end_safty))
         assert temp_frms is not None
+        mask_indices = np.arange(0, num_frames / self.fps * actual_fps, end // num_frames).astype(int)
         # Load masks for the selected frames
         mask_frms = self.load_and_process_masks(
             self.mask_paths[index], 
-            indices, 
+            mask_indices, 
             num_frames, 
             (720, 1280)
         )
@@ -454,7 +454,7 @@ class SFTDataset(Dataset):
         tensor_frms = (tensor_frms - 127.5) / 127.5
 
         item = {
-            "mp4": tensor_frms,
+            "mp4": tensor_frms, 
             "mask": mask_frms,
             "txt": self.captions[index],
             "num_frames": num_frames,
