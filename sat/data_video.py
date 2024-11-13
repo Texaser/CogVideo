@@ -456,6 +456,7 @@ class SFTDataset(Dataset):
             num_frames, 
             (720, 1280)
         )
+        # torch.save(mask_frms, '/mnt/bum/hanyi/data/hq-evaluation/rebound/328584580_rebound_79.333_0/masks.pt')
         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
         #tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
@@ -469,6 +470,8 @@ class SFTDataset(Dataset):
             tensor_frms, self.video_size, reshape_mode="center"
         )
         tensor_frms = (tensor_frms - 127.5) / 127.5
+        torch.save(tensor_frms, '/mnt/bum/hanyi/data/hq-evaluation/rebound/328584580_rebound_79.333_0/samples_16.pt')
+        exit(0)
         #tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
         #pose_frms = self.adjust_keypoints(pose_frms, scale, top, left, orig_w, orig_h)  # Adjust keypoints
         item = {

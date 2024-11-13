@@ -163,6 +163,6 @@ model:
       guider_config:
         target: sgm.modules.diffusionmodules.guiders.DynamicCFG
         params:
-          scale: 6
+          scale: 20
           exp: 5
           num_steps: 50

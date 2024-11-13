@@ -10,6 +10,8 @@ from sgm.modules import UNCONDITIONAL_CONFIG
 from sgm.modules.autoencoding.temporal_ae import VideoDecoder
 from sgm.modules.diffusionmodules.wrappers import OPENAIUNETWRAPPER
 import torchvision.transforms as transforms
+from einops import rearrange
+import imageio
 from sgm.util import (
     default,
     disabled_train,
@@ -346,17 +348,19 @@ class SATVideoDiffusionEngine(nn.Module):
 
         if self.noised_image_input:
             image = x[:, :, 0:1]
-            image = self.add_noise_to_frame(image)
+            # image = self.add_noise_to_frame(image)
             num_frames = batch['mask'].shape[1]  # Get number of frames from mask tensor
 
             if self.noise_last_frame:
-                last_frame = self.add_noise_to_frame(x[:, :, -1:])
+                # last_frame = self.add_noise_to_frame(x[:, :, -1:])
+                last_frame = x[:, :, -1:]
                 subsequent_frames = torch.zeros(
                     (image.shape[0], image.shape[1], num_frames - 2, image.shape[3], image.shape[4]),
                     device=image.device,
                     dtype=image.dtype
                 )
                 # subsequent_frames = self.add_noise_to_frame(x[:, :, 1:-1])
+                subsequent_frames = x[:, :, 1:-1]
                 image = torch.cat([image, subsequent_frames, last_frame], dim=2)
             else:
                 subsequent_frames = torch.zeros(
@@ -367,12 +371,59 @@ class SATVideoDiffusionEngine(nn.Module):
                 image = torch.cat([image, subsequent_frames], dim=2)
 
             # Add noise based on segmentation masks
+            # with torch.no_grad():
+            #     selected_frames = [i for i in range(49)]  # 要保存的帧的索引
+                
+            #     # 获取帧的高度和宽度
+            #     frame_height = image.shape[3]  # 高度 H
+            #     frame_width = image.shape[4]   # 宽度 W
+                
+            #     # 定义视频保存路径和参数
+            #     output_video_path = os.path.join(
+            #         "/mnt/bum/hanyi/data/hq-evaluation/rebound/328584580_rebound_79.333_0",
+            #         "output_video.mp4"
+            #     )
+            #     fps = 16  # 设置帧率，可以根据需要调整
+            #     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 使用 mp4v 编码器
+                
+            #     # 创建 VideoWriter 对象
+            #     video_writer = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
+                
+            #     for t in selected_frames:
+            #         frame = image[0, :, t].float().permute(1, 2, 0).cpu().numpy()  # 将 C x H x W 转为 H x W x C
+            #         frame = ((frame + 1) * 127.5).astype(np.uint8)  # 将范围从 [-1, 1] 变为 [0, 255]
+                    
+            #         # 转换颜色空间，从 RGB 转为 BGR（OpenCV 使用 BGR 格式）
+            #         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            #         if t==0 or t==48:
+            #             output_path = os.path.join("/mnt/bum/hanyi/data/hq-evaluation/rebound/328584580_rebound_79.333_0", f"frame_{t}.png")
+            #             cv2.imwrite(output_path, frame_bgr)  # Convert RGB to BGR for OpenCV
+            #         # 写入帧到视频
+            #         video_writer.write(frame_bgr)
+            #         print(f"Frame {t} written to video.")
+                
+            #     # 释放 VideoWriter 对象
+            #     video_writer.release()
+            #     print(f"Video saved to {output_video_path}")
+
+            # exit()
+            # with torch.no_grad():
+            #     selected_frames = [i for i in range(49)]  # Indices for the first 5 frames and the last frame
+            #     for t in selected_frames:
+            #         frame = image[0, :, t].float().permute(1, 2, 0).cpu().numpy()  # Convert C x H x W to H x W x C
+            #         frame = ((frame + 1) * 127.5).astype(np.uint8)  # Scale from [-1, 1] to [0, 255]
+                    
+            #         # Save each frame as an image
+            #         output_path = os.path.join("/mnt/bum/hanyi/data/hq-evaluation/free_throw_made/328839859_1+_1909.296_0", f"frame_{t}.png")
+            #         cv2.imwrite(output_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # Convert RGB to BGR for OpenCV
+            #         print(f"Image saved to {output_path}")
+
+            # exit()
             image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask']) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
             # output_dir = "./selected_frames_images_sanity_check"
             # os.makedirs(output_dir, exist_ok=True)
 
             # # Save only the first 5 frames and the last frame as images
-            # with torch.no_grad():
             #     selected_frames = [i for i in range(49)]  # Indices for the first 5 frames and the last frame
             #     for t in selected_frames:
             #         frame = image[0, :, t].float().permute(1, 2, 0).cpu().numpy()  # Convert C x H x W to H x W x C

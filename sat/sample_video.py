@@ -355,7 +355,8 @@ def sampling_main(args, model_cls):
     sample_func = model.sample
     T, H, W, C, F = args.sampling_num_frames, image_size[0], image_size[1], args.latent_channels, 8
     num_samples = [1]
-    force_uc_zero_embeddings = ["txt"]
+    force_uc_zero_embeddings = None
+    # force_uc_zero_embeddings = ["txt"]
     device = model.device
     with torch.no_grad():
         for text, cnt in tqdm(data_iter):
@@ -365,7 +366,6 @@ def sampling_main(args, model_cls):
                 folder_path = os.path.dirname(image_path)
                 first_image = Image.open(image_path).convert("RGB")
                 first_image = transform(first_image).unsqueeze(0).to("cuda")
-                first_image = resize_for_rectangle_crop(first_image, image_size, reshape_mode="center").unsqueeze(0)
                 first_image = first_image * 2.0 - 1.0
                 first_image = first_image.unsqueeze(2).to(torch.bfloat16)
                 original_frames = torch.load(os.path.join(folder_path, "frames.pth"))
@@ -373,10 +373,9 @@ def sampling_main(args, model_cls):
                 if args.noised_image_input:                   
                     image = add_noise_to_frame(first_image)
                     if args.noise_last_frame:
-                        last_image_path = image_path.replace('_first', '_last')
+                        last_image_path = image_path.replace('frame_0', 'frame_-1')
                         last_image = Image.open(last_image_path).convert("RGB")
                         last_image = transform(last_image).unsqueeze(0).to("cuda")
-                        last_image = resize_for_rectangle_crop(last_image, image_size, reshape_mode="center").unsqueeze(0)
                         last_image = last_image * 2.0 - 1.0
                         last_image = last_image.unsqueeze(2).to(torch.bfloat16)
                         last_frame = add_noise_to_frame(last_image)
@@ -396,27 +395,11 @@ def sampling_main(args, model_cls):
                     # Add noise based on the selected noise_mode
                     
                     # Check if all player masks exist
-                    player_mask_paths = []
-                    all_masks_exist = True
-                    for player_idx in range(10):
-                        mask_path = f"{folder_path}/masks/object_{player_idx}_masks.npy"
-                        if os.path.exists(mask_path):
-                            player_mask_paths.append(mask_path)
-                        else:
-                            print(f"Warning: Mask not found for video {folder_path}, player {player_idx}")
-                            all_masks_exist = False
-                            break
-
-
-                    masks = load_and_process_masks(
-                        player_mask_paths, 
-                        image, 
-                        num_frames,
-                        (480, 720),
-                        (720, 1280)
-                    )
+                    image_wo_condition = image
+                    masks = torch.load(os.path.join(folder_path, "masks.pt"), map_location=image.device).to(dtype=image.dtype)
                     masks = masks.unsqueeze(0)
-                    image, noise_masks = add_original_color_conditions_to_frames(image, masks, original_frames)
+                    # image, noise_masks = add_original_color_conditions_to_frames(image, masks, original_frames)
+                    image, noise_masks = add_color_conditions_to_frames(image, masks)
                 # import pudb; pudb.set_trace();
                 # image = Image.open(image_path).convert("RGB")
                 # image = transform(image).unsqueeze(0).to("cuda")
@@ -425,6 +408,9 @@ def sampling_main(args, model_cls):
                 # image = image.unsqueeze(2).to(torch.bfloat16)
                 image = model.encode_first_stage(image, None)
                 image = image.permute(0, 2, 1, 3, 4).contiguous()
+                image_wo_condition = model.encode_first_stage(image_wo_condition, None)
+                image_wo_condition = image_wo_condition.permute(0, 2, 1, 3, 4).contiguous()
+
                 # pad_shape = (image.shape[0], T - 1, C, H // F, W // F)
                 # image = torch.concat([image, torch.zeros(pad_shape).to(image.device).to(image.dtype)], dim=1)
             else:
@@ -458,7 +444,7 @@ def sampling_main(args, model_cls):
 
             if args.image2video and image is not None:
                 c["concat"] = image
-                uc["concat"] = image
+                uc["concat"] = image_wo_condition
 
             for index in range(args.batch_size):
                 # reload model on GPU
