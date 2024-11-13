@@ -447,16 +447,40 @@ class AdaLNMixin(BaseMixin):
         qk_ln=True,
         hidden_size_head=None,
         elementwise_affine=True,
+        patch_size=16,
+        use_cross_attn=False,  # Add use_cross_attn parameter
     ):
         super().__init__()
         self.num_layers = num_layers
         self.width = width
         self.height = height
+        self.patch_size = patch_size
         self.compressed_num_frames = compressed_num_frames
+        self.use_cross_attn = use_cross_attn  # Store use_cross_attn flag
 
         self.adaLN_modulations = nn.ModuleList(
             [nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 12 * hidden_size)) for _ in range(num_layers)]
         )
+
+        # Add instance mask projection only if using cross attention
+        if self.use_cross_attn:
+            self.mask_proj = nn.Sequential(
+                nn.Conv2d(1, hidden_size // 2, kernel_size=patch_size, stride=patch_size, bias=False),
+                nn.GELU(),
+                nn.Conv2d(hidden_size // 2, hidden_size, kernel_size=1, bias=False)
+            )
+
+            # Add cross-attention layers
+            self.cross_attention_layers = nn.ModuleList([
+                nn.MultiheadAttention(
+                    embed_dim=hidden_size,
+                    num_heads=hidden_size // hidden_size_head,
+                    dropout=0.1,
+                    batch_first=True,
+                    bias=False
+                )
+                for _ in range(num_layers)
+            ])
 
         self.qk_ln = qk_ln
         if qk_ln:
@@ -473,6 +497,34 @@ class AdaLNMixin(BaseMixin):
                 ]
             )
 
+    def process_segmentation_masks(self, segm_mask):
+        """
+        Process segmentation masks to prepare them for cross-attention
+        Args:
+            segm_mask: [B, T, N, H, W]
+        Returns:
+            processed_masks: [B, T*N, D] for cross attention
+        """
+        if not self.use_cross_attn:
+            return None
+            
+        B, T, N, H, W = segm_mask.shape
+        
+        # Reshape to process all instances
+        masks = segm_mask.reshape(B * T * N, 1, H, W)
+        masks = masks.to(dtype=self.mask_proj[0].weight.dtype)
+        
+        # Project masks to hidden dimension using patches
+        projected_masks = self.mask_proj(masks)  # [B*T*N, D, H', W']
+        
+        # Average pool over spatial dimensions
+        projected_masks = projected_masks.mean(dim=(-1, -2))  # [B*T*N, D]
+        
+        # Reshape to batch format
+        projected_masks = projected_masks.reshape(B, T * N, -1)  # [B, T*N, D]
+        
+        return projected_masks
+
     def layer_forward(
         self,
         hidden_states,
@@ -481,73 +533,98 @@ class AdaLNMixin(BaseMixin):
         **kwargs,
     ):
         text_length = kwargs["text_length"]
-        # hidden_states (b,(n_t+t*n_i),d)
-        text_hidden_states = hidden_states[:, :text_length]  # (b,n,d)
-        img_hidden_states = hidden_states[:, text_length:]  # (b,(t n),d)
+        layer_id = kwargs["layer_id"]
+        
+        layer = self.transformer.layers[layer_id]
+        
+        text_hidden_states = hidden_states[:, :text_length]
+        img_hidden_states = hidden_states[:, text_length:]
 
-        layer = self.transformer.layers[kwargs["layer_id"]]
-        adaLN_modulation = self.adaLN_modulations[kwargs["layer_id"]]
-
+        adaLN_modulation = self.adaLN_modulations[layer_id]
         (
-            shift_msa,
-            scale_msa,
-            gate_msa,
-            shift_mlp,
-            scale_mlp,
-            gate_mlp,
-            text_shift_msa,
-            text_scale_msa,
-            text_gate_msa,
-            text_shift_mlp,
-            text_scale_mlp,
-            text_gate_mlp,
+            shift_msa, scale_msa, gate_msa,
+            shift_mlp, scale_mlp, gate_mlp,
+            text_shift_msa, text_scale_msa, text_gate_msa,
+            text_shift_mlp, text_scale_mlp, text_gate_mlp,
         ) = adaLN_modulation(kwargs["emb"]).chunk(12, dim=1)
-        gate_msa, gate_mlp, text_gate_msa, text_gate_mlp = (
-            gate_msa.unsqueeze(1),
-            gate_mlp.unsqueeze(1),
-            text_gate_msa.unsqueeze(1),
-            text_gate_mlp.unsqueeze(1),
-        )
+        
+        gate_msa, gate_mlp = gate_msa.unsqueeze(1), gate_mlp.unsqueeze(1)
+        text_gate_msa, text_gate_mlp = text_gate_msa.unsqueeze(1), text_gate_mlp.unsqueeze(1)
 
-        # self full attention (b,(t n),d)
+        # Self-Attention
         img_attention_input = layer.input_layernorm(img_hidden_states)
         text_attention_input = layer.input_layernorm(text_hidden_states)
         img_attention_input = modulate(img_attention_input, shift_msa, scale_msa)
-        text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_msa)
+        text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_mlp)
 
-        attention_input = torch.cat((text_attention_input, img_attention_input), dim=1)  # (b,n_t+t*n_i,d)
+        attention_input = torch.cat((text_attention_input, img_attention_input), dim=1)
         attention_output = layer.attention(attention_input, mask, **kwargs)
-        text_attention_output = attention_output[:, :text_length]  # (b,n,d)
-        img_attention_output = attention_output[:, text_length:]  # (b,(t n),d)
+        
+        text_attention_output = attention_output[:, :text_length]
+        img_attention_output = attention_output[:, text_length:]
+
         if self.transformer.layernorm_order == "sandwich":
             text_attention_output = layer.third_layernorm(text_attention_output)
             img_attention_output = layer.third_layernorm(img_attention_output)
-        img_hidden_states = img_hidden_states + gate_msa * img_attention_output  # (b,(t n),d)
-        text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output  # (b,n,d)
 
-        # mlp (b,(t n),d)
-        img_mlp_input = layer.post_attention_layernorm(img_hidden_states)  # vision (b,(t n),d)
-        text_mlp_input = layer.post_attention_layernorm(text_hidden_states)  # language (b,n,d)
+        img_hidden_states = img_hidden_states + gate_msa * img_attention_output
+        text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output
+
+        # Cross-Attention with instance segmentation masks
+        if self.use_cross_attn and 'segm_mask' in kwargs:
+            segm_mask = kwargs['segm_mask']
+            processed_masks = self.process_segmentation_masks(segm_mask)  # Now [B, T*N, D]
+            
+            # Ensure consistent dtype for cross-attention
+            processed_masks = processed_masks.to(dtype=img_hidden_states.dtype)
+            
+            cross_attn_output, _ = self.cross_attention_layers[layer_id](
+                query=img_hidden_states,      # [B, T*P, D]
+                key=processed_masks,          # [B, T*N, D]
+                value=processed_masks,        # [B, T*N, D]
+                need_weights=False
+            )
+            img_hidden_states = img_hidden_states + gate_msa * cross_attn_output
+
+        # MLP
+        img_mlp_input = layer.post_attention_layernorm(img_hidden_states)
+        text_mlp_input = layer.post_attention_layernorm(text_hidden_states)
+        
         img_mlp_input = modulate(img_mlp_input, shift_mlp, scale_mlp)
         text_mlp_input = modulate(text_mlp_input, text_shift_mlp, text_scale_mlp)
-        mlp_input = torch.cat((text_mlp_input, img_mlp_input), dim=1)  # (b,(n_t+t*n_i),d
+        
+        mlp_input = torch.cat((text_mlp_input, img_mlp_input), dim=1)
         mlp_output = layer.mlp(mlp_input, **kwargs)
-        img_mlp_output = mlp_output[:, text_length:]  # vision (b,(t n),d)
-        text_mlp_output = mlp_output[:, :text_length]  # language (b,n,d)
+        
+        text_mlp_output = mlp_output[:, :text_length]
+        img_mlp_output = mlp_output[:, text_length:]
+
         if self.transformer.layernorm_order == "sandwich":
             text_mlp_output = layer.fourth_layernorm(text_mlp_output)
             img_mlp_output = layer.fourth_layernorm(img_mlp_output)
 
-        img_hidden_states = img_hidden_states + gate_mlp * img_mlp_output  # vision (b,(t n),d)
-        text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output  # language (b,n,d)
+        img_hidden_states = img_hidden_states + gate_mlp * img_mlp_output
+        text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output
 
-        hidden_states = torch.cat((text_hidden_states, img_hidden_states), dim=1)  # (b,(n_t+t*n_i),d)
+        hidden_states = torch.cat((text_hidden_states, img_hidden_states), dim=1)
         return hidden_states
 
     def reinit(self, parent_model=None):
+        # Initialize AdaLN parameters
         for layer in self.adaLN_modulations:
             nn.init.constant_(layer[-1].weight, 0)
             nn.init.constant_(layer[-1].bias, 0)
+        
+        if self.use_cross_attn:
+            # Initialize mask projection layers
+            for m in self.mask_proj.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.xavier_uniform_(m.weight)
+            
+            # Initialize cross-attention parameters
+            for layer in self.cross_attention_layers:
+                nn.init.xavier_uniform_(layer.in_proj_weight)
+                nn.init.xavier_uniform_(layer.out_proj.weight)
 
     @non_conflict
     def attention_fn(
@@ -664,7 +741,7 @@ class DiffusionTransformer(BaseModel):
             self.add_mixin(
                 "swiglu", SwiGLUMixin(num_layers, hidden_size, self.inner_hidden_size, bias=False), reinit=True
             )
-
+       
     def _build_modules(self, module_configs):
         model_channels = self.hidden_size
         # time_embed_dim = model_channels * 4
@@ -674,7 +751,7 @@ class DiffusionTransformer(BaseModel):
             nn.SiLU(),
             linear(time_embed_dim, time_embed_dim),
         )
-
+       
         if self.num_classes is not None:
             if isinstance(self.num_classes, int):
                 self.label_emb = nn.Embedding(self.num_classes, time_embed_dim)
@@ -771,35 +848,48 @@ class DiffusionTransformer(BaseModel):
         return
 
     def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
-        b, t, d, h, w = x.shape
+        """
+        Args:
+            x: Input tensor of shape (batch, time, channels, height, width)
+            timesteps: Tensor of shape (batch,)
+            context: Encoder outputs (for text conditioning)
+            y: Labels for class-conditional models
+            segm_masks: Segmentation masks of shape (batch, mask_length, mask_embed_dim)
+            **kwargs: Additional arguments
+        """
+        b, t, c, h, w = x.shape
         if x.dtype != self.dtype:
             x = x.to(self.dtype)
-        # This is not use in inference
+        
+        # Handle concatenated images if provided
         if "concat_images" in kwargs and kwargs["concat_images"] is not None:
-            if kwargs["concat_images"].shape[0] != x.shape[0]:
-                concat_images = kwargs["concat_images"].repeat(2, 1, 1, 1, 1)
-            else:
-                concat_images = kwargs["concat_images"]
+            concat_images = kwargs["concat_images"]
+            if concat_images.shape[0] != x.shape[0]:
+                concat_images = concat_images.repeat(2, 1, 1, 1, 1)
             x = torch.cat([x, concat_images], dim=2)
-
-        assert (y is not None) == (
-            self.num_classes is not None
-        ), "must specify y if and only if the model is class-conditional"
+ 
+        # Handle class conditioning
+        assert (y is not None) == (self.num_classes is not None), "Must specify y if and only if the model is class-conditional"
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False, dtype=self.dtype)
         emb = self.time_embed(t_emb)
-
+        
         if self.num_classes is not None:
-            # assert y.shape[0] == x.shape[0]
-            assert x.shape[0] % y.shape[0] == 0
+            assert x.shape[0] % y.shape[0] == 0, "Batch size must be divisible by number of classes"
             y = y.repeat_interleave(x.shape[0] // y.shape[0], dim=0)
             emb = emb + self.label_emb(y)
-
-        kwargs["seq_length"] = t * h * w // (self.patch_size**2)
+        
+        # Prepare sequence length and images
+        seq_length = t * h * w // (self.patch_size ** 2)
+        kwargs["seq_length"] = seq_length
         kwargs["images"] = x
         kwargs["emb"] = emb
         kwargs["encoder_outputs"] = context
-        kwargs["text_length"] = context.shape[1]
-
+        kwargs["text_length"] = context.shape[1] if context is not None else 0
+        
+        # Pass placeholder tensors for unused keys to avoid errors
         kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
+
+        
+        # Forward pass through the base transformer
         output = super().forward(**kwargs)[0]
         return output

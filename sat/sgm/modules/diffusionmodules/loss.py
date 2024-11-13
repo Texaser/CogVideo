@@ -89,6 +89,7 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
         torch.distributed.broadcast(alphas_cumprod_sqrt, src=src, group=mpu.get_model_parallel_group())
     
         additional_model_inputs["idx"] = idx
+        additional_model_inputs["segm_mask"] = batch["mask"]
     
         if self.offset_noise_level > 0.0:
             noise = (

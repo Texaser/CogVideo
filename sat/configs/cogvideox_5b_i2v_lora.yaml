@@ -4,10 +4,10 @@ model:
   latent_input: false
   noised_image_input: true
   noised_image_dropout: 0.05
-  noise_last_frame: true
+  noise_last_frame: false
   not_trainable_prefixes: ['all'] ## Using Lora
   pixel_space_loss: false
-  use_color_conditions: true
+  use_color_conditions: false
   
   log_keys:
     - txt
@@ -75,6 +75,7 @@ model:
           target: dit_video_concat.AdaLNMixin
           params:
             qk_ln: True
+            use_cross_attn: True
 
         final_layer_config:
           target: dit_video_concat.FinalLayerMixin

@@ -142,31 +142,28 @@ class SATVideoDiffusionEngine(nn.Module):
             
         if self.pixel_space_loss:
             # Get segmentation tensor from batch
-            segm_tensor = batch['segm']  # Expected shape: [B, 10, T, H, W]
-            B, num_objects, T, H, W = segm_tensor.shape
+            segm_tensor = batch['mask'] 
+            B, T, num_objects, H, W = segm_tensor.shape
                 
             # Calculate x0_pred from v-prediction
             sigma_t = (1 - alphas_cumprod_sqrt**2) ** 0.5
-            x0_pred = (noised_input - sigma_t * model_output) / alphas_cumprod_sqrt
+            #x0_pred = (noised_input - sigma_t * model_output) / alphas_cumprod_sqrt
+            pred_noised = alphas_cumprod_sqrt * x + sigma_t * model_output
                 
             # Decode predictions and noised input
-            x0_pred = x0_pred.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype)
-            x_hat = self.decode_first_stage(x0_pred)
+            #x0_pred = x0_pred.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype)
+            x_hat = self.decode_first_stage(pred_noised.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
             x_noised = self.decode_first_stage(noised_input.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
                 
             # Initialize tensor to accumulate segmentation-based losses
             seg_loss = 0.0
             valid_seg_count = 0
-                
-            # Create visualization tensors
-            seg_viz_pred = torch.zeros_like(x_hat)
-            seg_viz_target = torch.zeros_like(x_noised)
-            
+
             # Compute loss only within segmentation masks
             for b in range(B):
                 for t in range(T):
                     for obj_idx in range(num_objects):
-                        mask = segm_tensor[b, obj_idx, t]  # [H, W]
+                        mask = segm_tensor[b, t, obj_idx]  # [H, W]
                         
                         if not torch.any(mask):
                             continue
@@ -180,11 +177,7 @@ class SATVideoDiffusionEngine(nn.Module):
                             target * mask.unsqueeze(0),
                             reduction='sum'
                         )
-                        valid_seg_count += mask.sum().item() * C
-                            
-                        # Store masked regions for visualization
-                        seg_viz_pred[b, :, t] += pred * mask.unsqueeze(0)
-                        seg_viz_target[b, :, t] += target * mask.unsqueeze(0)
+                        valid_seg_count += mask.sum().item() * pred.shape[0]
                 
             # Compute average loss over all valid segmentation regions
             if valid_seg_count > 0:
@@ -368,23 +361,7 @@ class SATVideoDiffusionEngine(nn.Module):
 
             # Add noise based on segmentation masks
             image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask']) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
-            # output_dir = "./selected_frames_images_sanity_check"
-            # os.makedirs(output_dir, exist_ok=True)
 
-            # # Save only the first 5 frames and the last frame as images
-            # with torch.no_grad():
-            #     selected_frames = [i for i in range(49)]  # Indices for the first 5 frames and the last frame
-            #     for t in selected_frames:
-            #         frame = image[0, :, t].float().permute(1, 2, 0).cpu().numpy()  # Convert C x H x W to H x W x C
-            #         frame = ((frame + 1) * 127.5).astype(np.uint8)  # Scale from [-1, 1] to [0, 255]
-                    
-            #         # Save each frame as an image
-            #         output_path = os.path.join(output_dir, f"frame_{t}.png")
-            #         cv2.imwrite(output_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # Convert RGB to BGR for OpenCV
-            #         print(f"Image saved to {output_path}")
-            
-            # exit(0)
-            # Encode the noised image
             image = self.encode_first_stage(image, batch)
 
         x = self.encode_first_stage(x, batch)
@@ -397,6 +374,7 @@ class SATVideoDiffusionEngine(nn.Module):
 
         gc.collect()
         torch.cuda.empty_cache()
+
         loss, loss_dict = self(x, batch)
         
         return loss, loss_dict
