@@ -555,7 +555,7 @@ class AdaLNMixin(BaseMixin):
         img_attention_input = layer.input_layernorm(img_hidden_states)
         text_attention_input = layer.input_layernorm(text_hidden_states)
         img_attention_input = modulate(img_attention_input, shift_msa, scale_msa)
-        text_attention_input = modulate(text_attention_input, text_shift_msa, text_shift_msa)
+        text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_msa)
 
         attention_input = torch.cat((text_attention_input, img_attention_input), dim=1)
         attention_output = layer.attention(attention_input, mask, **kwargs)
