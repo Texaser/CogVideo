@@ -368,24 +368,8 @@ class SATVideoDiffusionEngine(nn.Module):
                 image = torch.cat([image, subsequent_frames], dim=2)
 
             # Add noise based on segmentation masks
-            image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask']) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
-            # output_dir = "./selected_frames_images_sanity_check"
-            # os.makedirs(output_dir, exist_ok=True)
+            #image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask']) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
 
-            # # Save only the first 5 frames and the last frame as images
-            # with torch.no_grad():
-            #     selected_frames = [i for i in range(49)]  # Indices for the first 5 frames and the last frame
-            #     for t in selected_frames:
-            #         frame = image[0, :, t].float().permute(1, 2, 0).cpu().numpy()  # Convert C x H x W to H x W x C
-            #         frame = ((frame + 1) * 127.5).astype(np.uint8)  # Scale from [-1, 1] to [0, 255]
-                    
-            #         # Save each frame as an image
-            #         output_path = os.path.join(output_dir, f"frame_{t}.png")
-            #         cv2.imwrite(output_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # Convert RGB to BGR for OpenCV
-            #         print(f"Image saved to {output_path}")
-            
-            # exit(0)
-            # Encode the noised image
             image = self.encode_first_stage(image, batch)
 
         x = self.encode_first_stage(x, batch)
@@ -577,7 +561,7 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
 
-            image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask'])
+            #image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask'])
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
 
