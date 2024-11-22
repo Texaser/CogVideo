@@ -507,14 +507,13 @@ class VideoDDIMSampler(BaseDiffusionSampler):
             additional_model_inputs["idx"] = x.new_ones([x.shape[0]]) * timestep
             if scale_emb is not None:
                 additional_model_inputs["scale_emb"] = scale_emb
-            denoised, hidden_states = denoiser(x, alpha_cumprod_sqrt, cond, **additional_model_inputs)
-            denoised = denoised.to(torch.float32)
+            denoised = denoiser(x, alpha_cumprod_sqrt, cond, **additional_model_inputs).to(torch.float32)
         else:
             additional_model_inputs["idx"] = torch.cat([x.new_ones([x.shape[0]]) * timestep] * 2)
-            denoised, hidden_states = denoiser(
+            denoised = denoiser(
                 *self.guider.prepare_inputs(x, alpha_cumprod_sqrt, cond, uc), **additional_model_inputs
-            )
-            denoised = denoised.to(torch.float32)
+            ).to(torch.float32)
+            
             if isinstance(self.guider, DynamicCFG):
                 denoised = self.guider(
                     denoised, (1 - alpha_cumprod_sqrt**2) ** 0.5, step_index=self.num_steps - timestep, scale=scale

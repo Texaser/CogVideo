@@ -22,7 +22,6 @@ from torchvision.utils import save_image
 import os
 import cv2
 import numpy as np 
-from transformers import Dinov2Model, AutoImageProcessor, TimesformerModel
 
 class SATVideoDiffusionEngine(nn.Module):
     def __init__(self, args, **kwargs):
@@ -60,13 +59,6 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noised_image_all_concat = model_config.get("noised_image_all_concat", False)
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
         self.noise_last_frame = model_config.get("noise_last_frame", False)
-        # REPA
-        self.repa = Dinov2Model.from_pretrained("facebook/dinov2-base") if model_config.get("use_repa", False) else None
-        self.repa_feature_extractor = AutoImageProcessor.from_pretrained("facebook/dinov2-base") if model_config.get("use_repa", False) else None
-        #self.repa = TimesformerModel.from_pretrained("/mnt/mir/fan23j/CogVideo/pretrained/yulu_goat_pytorch") if model_config.get("use_repa", False) else None
-        if self.repa is not None:
-            self.repa.eval()
-            self.repa.to(args.device)
         
 
         # Add noise_mode configuration option
@@ -318,64 +310,6 @@ class SATVideoDiffusionEngine(nn.Module):
         #self.write_noise_masks(noise_masks)
         return image, noise_masks
 
-    def extract_dinov2_features(self, x):
-        # Ensure x is in the correct shape: [batch_size, channels, frames, height, width]
-        batch_size, channels, frames, height, width = x.shape
-        
-        # Initialize a list to store features for each frame
-        frame_features = []
-
-        for frame in range(frames):
-            # Extract single frame
-            _x = x[:, :, frame, :, :]  # Shape: [batch_size, channels, height, width]
-            
-            # Convert to float32 if not already
-            _x = _x.to(torch.float32)
-            
-            # Shift and scale
-            _x = (_x + 1.0) / 2.0
-            _x = (_x * 255.0).to(torch.uint8)
-            
-            # Prepare inputs for the feature extractor
-            inputs = self.repa_feature_extractor(images=_x, return_tensors="pt").to(self.device)
-            
-            # Extract features
-            with torch.no_grad():
-                dino_features = self.repa(**inputs).last_hidden_state
-            
-            # Append to our list of frame features
-            frame_features.append(dino_features)
-
-        # Concatenate all frame features
-        # Assuming the feature extractor outputs shape [batch_size, num_patches, feature_dim]
-        # We concatenate along the num_patches dimension
-        all_features = torch.cat(frame_features, dim=1)
-        
-        # Convert to bfloat16 if needed
-        all_features = all_features.to(torch.bfloat16)
-
-        return all_features
-    
-    def extract_yulu_features(self, x):
-        B, C, T, H, W = x.shape
-        x = x.reshape(B, C * T, H, W)
-
-        x = F.interpolate(x, 
-                        size=(246, 246), 
-                        mode='bilinear', 
-                        align_corners=False)
-
-        x = x.reshape(B, C, T, 246, 246)
-        indices = torch.linspace(0, T-1, 42).long()
-        x = x[:, :, indices].to(torch.bfloat16)
-
-        x = x.permute(0, 2, 1, 3, 4).contiguous()
-
-        with torch.no_grad():
-            x = self.repa(x).last_hidden_state
-
-        return x
-
     def shared_step(self, batch: Dict) -> Any:
         x = self.get_input(batch)
         if self.lr_scale is not None:
@@ -415,10 +349,6 @@ class SATVideoDiffusionEngine(nn.Module):
             # Encode the noised image
             image = self.encode_first_stage(image, batch)
 
-
-        if self.repa is not None:
-            batch['repa'] = self.extract_dinov2_features(x)
-            #batch['repa'] = self.extract_yulu_features(x)
         x = self.encode_first_stage(x, batch)
         x = x.permute(0, 2, 1, 3, 4).contiguous()
         if self.noised_image_input:

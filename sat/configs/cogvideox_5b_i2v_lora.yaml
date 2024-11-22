@@ -4,10 +4,9 @@ model:
   latent_input: false
   noised_image_input: true
   noised_image_dropout: 0.05
-  noise_last_frame: true
-  noise_mode: 'pose' # bbox, pose, or both
+  noise_last_frame: false
+  noise_mode: 'bbox' # bbox, pose, or both
   not_trainable_prefixes: ['all'] ## Using Lora
-  use_repa: true # REPA
   log_keys:
     - txt
 
@@ -59,14 +58,6 @@ model:
             learnable_pos_embed: True
             hidden_size_head: 64
             text_length: 226
-
-        repa_mlp_config:
-          target: dit_video_concat.RepaMLP
-          params:
-            hidden_size: 3072
-            projector_dim: 2048
-            z_dim: 768
-            num_align_layers: 42
 
         lora_config:
           target: sat.model.finetune.lora2.LoraMixin

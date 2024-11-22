@@ -393,7 +393,12 @@ class SFTDataset(Dataset):
                         caption = data['caption']
                         self.captions.append(caption)
 
-                        bounding_boxes = data['bounding_boxes']
+                        # bounding_boxes = data['bounding_boxes']
+                        bbox_path = os.path.join(root, filename).replace("/mnt/mir/fan23j/data/hq-poses/", "/mnt/bum/hanyi/data/hq-bbox/")
+                        # bounding_boxes = data[bbox_path]
+                        with open(bbox_path, "r") as f:
+                            bbox_data = json.load(f)
+                        bounding_boxes = bbox_data['bounding_boxes']
                         trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
                         self.tracklets.append(trajectory_data)
                         self.pose_tracklets.append(keypoints_data)  # Store the pose data
@@ -501,7 +506,7 @@ class SFTDataset(Dataset):
         keypoints_data = [[[[0, 0] for _ in range(num_keypoints)] for _ in range(num_players)] for _ in range(num_frames)]
 
         for frame_idx, frame in enumerate(bounding_boxes):
-            assert len(frame['bounding_box_instances']) == num_players
+            # assert len(frame['bounding_box_instances']) == num_players
             for player_idx, box in enumerate(frame['bounding_box_instances']):
                 if box is not None:
                     trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
