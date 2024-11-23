@@ -56,7 +56,11 @@ class SATVideoDiffusionEngine(nn.Module):
         self.pixel_space_loss = model_config.get("pixel_space_loss", False)
         self.noise_mode = model_config.get("noise_mode", "bbox")
 
-
+    def reinit(self, parent_model=None):
+        # reload the initial params from previous trained modules
+        # you can also get access to other mixins through parent_model.get_mixin().
+        pass
+        
     def _init_model_components(self, args):
         """Initialize model components and set datatypes"""
         # Set dtype based on args

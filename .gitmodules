@@ -1,0 +1,3 @@
+[submodule "sat/SwissArmyTransformer"]
+	path = sat/SwissArmyTransformer
+	url = https://github.com/THUDM/SwissArmyTransformer.git
