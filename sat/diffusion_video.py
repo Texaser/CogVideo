@@ -54,7 +54,8 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
         self.noise_last_frame = model_config.get("noise_last_frame", False)
         self.pixel_space_loss = model_config.get("pixel_space_loss", False)
-        self.use_color_conditions = model_config.get("use_color_conditions", False)
+        self.noise_mode = model_config.get("noise_mode", "bbox")
+
 
     def _init_model_components(self, args):
         """Initialize model components and set datatypes"""
@@ -183,7 +184,7 @@ class SATVideoDiffusionEngine(nn.Module):
         image = image + image_noise
         return image    
 
-    def add_noised_conditions_to_frames(self, image, bbox_tensor, noise_mode='bbox'):
+    def add_noised_conditions_to_frames(self, image, bbox_tensor):
             """
             Injects Gaussian noise into each frame of the image based on the bounding boxes and/or pose keypoints,
             excluding the first frame which retains the reference image with added noise.
@@ -347,7 +348,6 @@ class SATVideoDiffusionEngine(nn.Module):
                     device=image.device,
                     dtype=image.dtype
                 )
-                # subsequent_frames = self.add_noise_to_frame(x[:, :, 1:-1])
                 image = torch.cat([image, subsequent_frames, last_frame], dim=2)
             else:
                 subsequent_frames = torch.zeros(
@@ -356,10 +356,11 @@ class SATVideoDiffusionEngine(nn.Module):
                     dtype=image.dtype
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
-
+            
             image, noise_masks = self.add_noised_conditions_to_frames(
-                image, batch['bbox'], noise_mode=self.noise_mode
-            )
+                image, batch['bbox'], batch['mask'], noise_mode=self.noise_mode
+            ) if self.noise_mode == 'bbox' else add_color_conditions_to_frames(image, batch['mask'])
+        
 
             image = self.encode_first_stage(image, batch)
 
@@ -554,8 +555,9 @@ class SATVideoDiffusionEngine(nn.Module):
 
             # Add noise based on the selected noise_mode
             image, noise_masks = self.add_noised_conditions_to_frames(
-                image, batch['bbox'], noise_mode=self.noise_mode
-            )
+                image, batch['bbox'], batch['mask'], noise_mode=self.noise_mode
+            ) if self.noise_mode == 'bbox' else add_color_conditions_to_frames(image, batch['mask'])
+            
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
 

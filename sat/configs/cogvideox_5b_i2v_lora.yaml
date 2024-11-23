@@ -7,8 +7,7 @@ model:
     noise_last_frame: false
     not_trainable_prefixes: ["all"] ## Using Lora
     pixel_space_loss: true
-    use_color_conditions: false
-    noise_mode: "bbox"
+    noise_mode: "bbox" # bbox, segm
 
     log_keys:
         - txt
