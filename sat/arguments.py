@@ -47,6 +47,12 @@ def add_sampling_config_args(parser):
     group.add_argument("--only-log-video-latents", type=bool, default=False)
     group.add_argument("--latent-channels", type=int, default=32)
     group.add_argument("--image2video", action="store_true")
+    group.add_argument("--sampling_image_size", action="store_true")
+    group.add_argument("--noised_image_input", action="store_true")
+    group.add_argument("--noise_last_frame", action="store_true")
+    group.add_argument("--noise_mode", action="store_true")
+    group.add_argument("--player_encodings", action="store_true")
+    group.add_argument("--joint_encodings", action="store_true")
 
     return parser
 
