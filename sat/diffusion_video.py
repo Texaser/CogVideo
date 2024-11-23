@@ -27,35 +27,28 @@ import numpy as np
 class SATVideoDiffusionEngine(nn.Module):
     def __init__(self, args, **kwargs):
         super().__init__()
+        self._init_configs(args.model_config)
+        self._init_model_components(args)
+        self.device = args.device
 
-        model_config = args.model_config
-        # model args preprocess
-        log_keys = model_config.get("log_keys", None)
-        input_key = model_config.get("input_key", "mp4")
-        network_config = model_config.get("network_config", None)
-        network_wrapper = model_config.get("network_wrapper", None)
-        denoiser_config = model_config.get("denoiser_config", None)
-        sampler_config = model_config.get("sampler_config", None)
-        conditioner_config = model_config.get("conditioner_config", None)
-        first_stage_config = model_config.get("first_stage_config", None)
-        loss_fn_config = model_config.get("loss_fn_config", None)
-        scale_factor = model_config.get("scale_factor", 1.0)
-        latent_input = model_config.get("latent_input", False)
-        disable_first_stage_autocast = model_config.get("disable_first_stage_autocast", False)
-        no_cond_log = model_config.get("disable_first_stage_autocast", False)
-        not_trainable_prefixes = model_config.get("not_trainable_prefixes", ["first_stage_model", "conditioner"])
-        compile_model = model_config.get("compile_model", False)
-        en_and_decode_n_samples_a_time = model_config.get("en_and_decode_n_samples_a_time", None)
-        lr_scale = model_config.get("lr_scale", None)
-        lora_train = model_config.get("lora_train", False)
-        self.use_pd = model_config.get("use_pd", False)  # progressive distillation
-
-        self.log_keys = log_keys
-        self.input_key = input_key
-        self.not_trainable_prefixes = not_trainable_prefixes
-        self.en_and_decode_n_samples_a_time = en_and_decode_n_samples_a_time
-        self.lr_scale = lr_scale
-        self.lora_train = lora_train
+    def _init_configs(self, model_config: Dict):
+        """Initialize configuration parameters from model config"""
+        # Basic configs
+        self.log_keys = model_config.get("log_keys", None)
+        self.input_key = model_config.get("input_key", "mp4")
+        self.not_trainable_prefixes = model_config.get("not_trainable_prefixes", ["first_stage_model", "conditioner"])
+        self.en_and_decode_n_samples_a_time = model_config.get("en_and_decode_n_samples_a_time", None)
+        self.lr_scale = model_config.get("lr_scale", None)
+        self.scale_factor = model_config.get("scale_factor", 1.0)
+        
+        # Model behavior configs
+        self.latent_input = model_config.get("latent_input", False)
+        self.lora_train = model_config.get("lora_train", False)
+        self.use_pd = model_config.get("use_pd", False)
+        self.disable_first_stage_autocast = model_config.get("disable_first_stage_autocast", False)
+        self.no_cond_log = model_config.get("no_cond_log", False)
+        
+        # Noise and image processing configs
         self.noised_image_input = model_config.get("noised_image_input", False)
         self.noised_image_all_concat = model_config.get("noised_image_all_concat", False)
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
@@ -63,148 +56,111 @@ class SATVideoDiffusionEngine(nn.Module):
         self.pixel_space_loss = model_config.get("pixel_space_loss", False)
         self.use_color_conditions = model_config.get("use_color_conditions", False)
 
-        # Add noise_mode configuration option
-        self.noise_mode = model_config.get('noise_mode', 'pose')  # 'bbox', 'pose', or 'both'
+    def _init_model_components(self, args):
+        """Initialize model components and set datatypes"""
+        # Set dtype based on args
+        self.dtype = torch.float16 if args.fp16 else torch.bfloat16 if args.bf16 else torch.float32
+        self.dtype_str = "fp16" if args.fp16 else "bf16" if args.bf16 else "fp32"
 
-        if args.fp16:
-            dtype = torch.float16
-            dtype_str = "fp16"
-        elif args.bf16:
-            dtype = torch.bfloat16
-            dtype_str = "bf16"
-        else:
-            dtype = torch.float32
-            dtype_str = "fp32"
-        self.dtype = dtype
-        self.dtype_str = dtype_str
-
-        network_config["params"]["dtype"] = dtype_str
+        # Initialize network
+        network_config = args.model_config.get("network_config")
+        network_config["params"]["dtype"] = self.dtype_str
+        network_wrapper = args.model_config.get("network_wrapper", None)
+        compile_model = args.model_config.get("compile_model", False)
+        
         model = instantiate_from_config(network_config)
         self.model = get_obj_from_str(default(network_wrapper, OPENAIUNETWRAPPER))(
-            model, compile_model=compile_model, dtype=dtype
+            model, compile_model=compile_model, dtype=self.dtype
         )
 
-        self.denoiser = instantiate_from_config(denoiser_config)
-        self.sampler = instantiate_from_config(sampler_config) if sampler_config is not None else None
-        self.conditioner = instantiate_from_config(default(conditioner_config, UNCONDITIONAL_CONFIG))
-
-        self._init_first_stage(first_stage_config)
-
-        self.loss_fn = instantiate_from_config(loss_fn_config) if loss_fn_config is not None else None
-
-        self.latent_input = latent_input
-        self.scale_factor = scale_factor
-        self.disable_first_stage_autocast = disable_first_stage_autocast
-        self.no_cond_log = no_cond_log
-        self.device = args.device
-
-    def disable_untrainable_params(self):
-        total_trainable = 0
-        for n, p in self.named_parameters():
-            if p.requires_grad == False:
-                continue
-            flag = False
-            for prefix in self.not_trainable_prefixes:
-                if n.startswith(prefix) or prefix == "all":
-                    flag = True
-                    break
-
-            lora_prefix = ["matrix_A", "matrix_B"]
-            for prefix in lora_prefix:
-                if prefix in n:
-                    flag = False
-                    break
-
-            if flag:
-                p.requires_grad_(False)
-            else:
-                total_trainable += p.numel()
-
-        print_rank0("***** Total trainable parameters: " + str(total_trainable) + " *****")
-
-    def reinit(self, parent_model=None):
-        # reload the initial params from previous trained modules
-        # you can also get access to other mixins through parent_model.get_mixin().
-        pass
+        # Initialize other components
+        self.denoiser = instantiate_from_config(args.model_config.get("denoiser_config"))
+        self.sampler = instantiate_from_config(args.model_config.get("sampler_config")) if args.model_config.get("sampler_config") else None
+        self.conditioner = instantiate_from_config(default(args.model_config.get("conditioner_config"), UNCONDITIONAL_CONFIG))
+        self._init_first_stage(args.model_config.get("first_stage_config"))
+        self.loss_fn = instantiate_from_config(args.model_config.get("loss_fn_config")) if args.model_config.get("loss_fn_config") else None
 
     def _init_first_stage(self, config):
+        """Initialize first stage model"""
         model = instantiate_from_config(config).eval()
         model.train = disabled_train
         for param in model.parameters():
             param.requires_grad = False
         self.first_stage_model = model
-        
+
+    def disable_untrainable_params(self):
+        """Disable gradients for untrainable parameters"""
+        total_trainable = 0
+        for n, p in self.named_parameters():
+            if not p.requires_grad:
+                continue
+                
+            should_train = not any(n.startswith(prefix) or prefix == "all" 
+                                 for prefix in self.not_trainable_prefixes)
+            
+            # Keep LoRA parameters trainable
+            if any(prefix in n for prefix in ["matrix_A", "matrix_B"]):
+                should_train = True
+                
+            p.requires_grad_(should_train)
+            if should_train:
+                total_trainable += p.numel()
+
+        print_rank0(f"***** Total trainable parameters: {total_trainable} *****")
+
     def forward(self, x, batch):
-        # Obtain the diffusion loss and additional outputs
+        """Forward pass with optional pixel space loss"""
         loss, model_output, noised_input, alphas_cumprod_sqrt = self.loss_fn(
             self.model, self.denoiser, self.conditioner, x, batch
         )
-            
-        if self.pixel_space_loss:
-            # Get segmentation tensor from batch
-            segm_tensor = batch['mask'] 
-            B, T, num_objects, H, W = segm_tensor.shape
-                
-            # Calculate x0_pred from v-prediction
-            sigma_t = (1 - alphas_cumprod_sqrt**2) ** 0.5
-            #x0_pred = (noised_input - sigma_t * model_output) / alphas_cumprod_sqrt
-            pred_noised = alphas_cumprod_sqrt * x + sigma_t * model_output
-                
-            # Decode predictions and noised input
-            #x0_pred = x0_pred.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype)
-            x_hat = self.decode_first_stage(pred_noised.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
-            x_noised = self.decode_first_stage(noised_input.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
-                
-            # Initialize tensor to accumulate segmentation-based losses
-            seg_loss = 0.0
-            valid_seg_count = 0
-                
-            # Create visualization tensors
-            # seg_viz_pred = torch.zeros_like(x_hat)
-            # seg_viz_target = torch.zeros_like(x_noised)
 
-            # Compute loss only within segmentation masks
-            for b in range(B):
-                for t in range(T):
-                    for obj_idx in range(num_objects):
-                        mask = segm_tensor[b, t, obj_idx]  # [H, W]
+        if not self.pixel_space_loss:
+            return loss.mean(), {"loss": loss.mean()}
+
+        return self._compute_pixel_space_loss(loss, model_output, noised_input, 
+                                            alphas_cumprod_sqrt, batch)
+
+    def _compute_pixel_space_loss(self, loss, model_output, noised_input, alphas_cumprod_sqrt, batch):
+        """Compute pixel-space loss using segmentation masks"""
+        segm_tensor = batch['mask']
+        B, T, num_objects, H, W = segm_tensor.shape
+        
+        # Calculate sigma and predicted noise
+        sigma_t = (1 - alphas_cumprod_sqrt**2) ** 0.5
+        pred_noised = alphas_cumprod_sqrt * x + sigma_t * model_output
+        
+        # Decode predictions
+        x_hat = self.decode_first_stage(pred_noised.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
+        x_noised = self.decode_first_stage(noised_input.permute(0, 2, 1, 3, 4).contiguous().to(self.dtype))
+        
+        # Compute segmentation loss
+        seg_loss = 0.0
+        valid_seg_count = 0
+        
+        for b in range(B):
+            for t in range(T):
+                for obj_idx in range(num_objects):
+                    mask = segm_tensor[b, t, obj_idx]
+                    if not torch.any(mask):
+                        continue
                         
-                        if not torch.any(mask):
-                            continue
-                            
-                        # Compute MSE loss only within the masked region
-                        pred = x_hat[b, :, t]
-                        target = x_noised[b, :, t]
-                        
-                        seg_loss += F.mse_loss(
-                            pred * mask.unsqueeze(0),
-                            target * mask.unsqueeze(0),
-                            reduction='sum'
-                        )
-                        valid_seg_count += mask.sum().item() * pred.shape[0]
-                            
-                        # Store masked regions for visualization
-                        # seg_viz_pred[b, :, t] += pred * mask.unsqueeze(0)
-                        # seg_viz_target[b, :, t] += target * mask.unsqueeze(0)
-                
-            # Compute average loss over all valid segmentation regions
-            if valid_seg_count > 0:
-                seg_loss = seg_loss / valid_seg_count
-                total_loss = loss.mean() + seg_loss
-            else:
-                total_loss = loss.mean()
-                
-            loss_dict = {
-                "loss": total_loss,
-            }
-            if valid_seg_count > 0:
-                loss_dict["seg_loss"] = seg_loss
-                
-        else:
-            total_loss = loss.mean()
-            loss_dict = {"loss": total_loss}
-                
-        return total_loss, loss_dict
+                    pred = x_hat[b, :, t]
+                    target = x_noised[b, :, t]
+                    
+                    seg_loss += F.mse_loss(
+                        pred * mask.unsqueeze(0),
+                        target * mask.unsqueeze(0),
+                        reduction='sum'
+                    )
+                    valid_seg_count += mask.sum().item() * pred.shape[0]
+        
+        # Compute final loss
+        if valid_seg_count > 0:
+            seg_loss = seg_loss / valid_seg_count
+            total_loss = loss.mean() + seg_loss
+            return total_loss, {"loss": total_loss, "seg_loss": seg_loss}
+        
+        return loss.mean(), {"loss": loss.mean()}
 
     def add_noise_to_frame(self, image):
         sigma = torch.normal(mean=-3.0, std=0.5, size=(image.shape[0],)).to(self.device)
@@ -227,40 +183,74 @@ class SATVideoDiffusionEngine(nn.Module):
         image = image + image_noise
         return image    
 
-    def add_noised_conditions_to_frames(self, image, segm_tensor, noise_mode='segm'):
-        """
-        Injects Gaussian noise into each frame of the image based on the segmentation masks,
-        excluding the first frame which retains the reference image with added noise.
-        """
-        B, C, T, H, W = image.shape
-        _, _, num_objects, _, _ = segm_tensor.shape  # [B, T, 10, H, W]
+    def add_noised_conditions_to_frames(self, image, bbox_tensor, noise_mode='bbox'):
+            """
+            Injects Gaussian noise into each frame of the image based on the bounding boxes and/or pose keypoints,
+            excluding the first frame which retains the reference image with added noise.
+            Returns the modified image and the noise masks for visualization.
+            """
+            B, C, T, H, W = image.shape  # Assuming image shape is [B, C, T, H, W]
+            _, _, N, _ = bbox_tensor.shape  # N is the number of bounding boxes per frame
 
-        # Initialize a tensor to store noise masks
-        noise_masks = torch.zeros_like(image)
+            # Initialize a tensor to store noise masks
+            noise_masks = torch.zeros_like(image)
 
-        # Only add Gaussian noise to frames after the first
-        for b in range(B):
-            for t in range(1, T-1):
-                # Process segmentation masks for each object
-                for obj_idx in range(num_objects):
-                    # Get segmentation mask for current object
-                    mask = segm_tensor[b, t, obj_idx]  # [H, W]
+            # Only add Gaussian noise to frames after the first
+            for b in range(B):
+                for t in range(1, T):
+                
+                    # Process bounding boxes
+                    bboxes = bbox_tensor[b, t]  # Shape: [N, 4]
+                    for n in range(N):
+                        bbox = bboxes[n]
+                        x1_norm, y1_norm, x2_norm, y2_norm = bbox
 
-                    # Skip if mask is empty
-                    if not torch.any(mask):
-                        continue
+                        # Convert normalized coordinates to pixel coordinates
+                        x1 = x1_norm * W
+                        y1 = y1_norm * H
+                        x2 = x2_norm * W
+                        y2 = y2_norm * H
 
-                    # Generate noise for masked region
-                    noise = torch.randn(C, H, W, device=image.device, dtype=image.dtype)
-                    scaled_noise = noise * mask.unsqueeze(0)  # Scale noise by mask
+                        # Ensure coordinates are in the correct order
+                        x1, x2 = sorted([x1.item(), x2.item()])
+                        y1, y2 = sorted([y1.item(), y2.item()])
 
-                    # Add noise to the image in place
-                    image[b, :, t] += scaled_noise
-                    
-                    # Store the noise mask
-                    noise_masks[b, :, t] += scaled_noise
+                        # Convert to integers and clamp
+                        x1 = int(max(0, min(W - 1, x1)))
+                        y1 = int(max(0, min(H - 1, y1)))
+                        x2 = int(max(x1 + 1, min(W, x2)))
+                        y2 = int(max(y1 + 1, min(H, y2)))
 
-        return image, noise_masks
+                        h = y2 - y1
+                        w = x2 - x1
+
+                        if h <= 0 or w <= 0:
+                            continue  # Skip invalid bounding boxes
+
+                        # Generate a Gaussian mask
+                        y_coords = torch.arange(h, device=image.device).unsqueeze(1).repeat(1, w)
+                        x_coords = torch.arange(w, device=image.device).unsqueeze(0).repeat(h, 1)
+                        mx = (h - 1) / 2.0
+                        my = (w - 1) / 2.0
+                        sx = h / 3.0
+                        sy = w / 3.0
+                        gaussian = (1 / (2 * math.pi * sx * sy)) * torch.exp(
+                            -(((x_coords - my) ** 2) / (2 * sy ** 2) + ((y_coords - mx) ** 2) / (2 * sx ** 2))
+                        )
+                        gaussian = gaussian / gaussian.max()
+                        gaussian = gaussian.to(image.dtype)
+
+                        encoded_gaussian = gaussian.unsqueeze(0)
+
+                        # Generate noise scaled by the encoded Gaussian mask
+                        noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
+
+                        # Add noise to the image in place
+                        image[b, :, t, y1:y2, x1:x2] += noise
+
+                        # Store the noise mask
+                        noise_masks[b, :, t, y1:y2, x1:x2] = noise
+            return image, noise_masks
 
     def add_color_conditions_to_frames(self, image, segm_tensor):
         """
@@ -367,25 +357,10 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
 
-            # Add noise based on segmentation masks
-            image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask']) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
-            # output_dir = "./selected_frames_images_sanity_check"
-            # os.makedirs(output_dir, exist_ok=True)
+            image, noise_masks = self.add_noised_conditions_to_frames(
+                image, batch['bbox'], noise_mode=self.noise_mode
+            )
 
-            # # Save only the first 5 frames and the last frame as images
-            # with torch.no_grad():
-            #     selected_frames = [i for i in range(49)]  # Indices for the first 5 frames and the last frame
-            #     for t in selected_frames:
-            #         frame = image[0, :, t].float().permute(1, 2, 0).cpu().numpy()  # Convert C x H x W to H x W x C
-            #         frame = ((frame + 1) * 127.5).astype(np.uint8)  # Scale from [-1, 1] to [0, 255]
-                    
-            #         # Save each frame as an image
-            #         output_path = os.path.join(output_dir, f"frame_{t}.png")
-            #         cv2.imwrite(output_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # Convert RGB to BGR for OpenCV
-            #         print(f"Image saved to {output_path}")
-            
-            # exit(0)
-            # Encode the noised image
             image = self.encode_first_stage(image, batch)
 
         x = self.encode_first_stage(x, batch)
@@ -577,7 +552,10 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
 
-            image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask'])
+            # Add noise based on the selected noise_mode
+            image, noise_masks = self.add_noised_conditions_to_frames(
+                image, batch['bbox'], noise_mode=self.noise_mode
+            )
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
 
@@ -599,6 +577,10 @@ class SATVideoDiffusionEngine(nn.Module):
                 # Visualize samples with segmentation overlay
                 samples_with_segm = self.draw_segmentation_overlay(samples.clone(), batch)
                 log["samples_segm"] = samples_with_segm
+
+                # Draw bounding boxes on the samples
+                samples_with_bbox = self.draw_annotations(samples.clone(), batch, draw_bbox=True, draw_pose=False)
+                log["samples_bbox"] = samples_with_bbox
                 
         return log
     
@@ -670,3 +652,60 @@ class SATVideoDiffusionEngine(nn.Module):
                 samples_with_overlay[b, t] = frame_tensor
 
         return samples_with_overlay
+
+    def draw_annotations(self, samples, batch, draw_bbox=True, draw_pose=True):
+        """
+        Draws bounding boxes and/or pose annotations on the decoded video samples.
+
+        Args:
+            samples (Tensor): Decoded video samples of shape [B, T, C, H, W].
+            batch (Dict): Batch dictionary containing 'bbox' and 'pose'.
+            draw_bbox (bool): Whether to draw bounding boxes.
+            draw_pose (bool): Whether to draw pose keypoints.
+
+        Returns:
+            Tensor: Video samples with annotations drawn, same shape as input samples.
+        """
+        B, T, C, H, W = samples.shape
+        N = batch['bbox'].shape[2]  # Number of bounding boxes per frame
+
+        samples_with_annotations = samples.clone()
+
+        for b in range(B):
+            for t in range(T):
+                frame = samples[b, t]  # Shape: [C, H, W]
+                # Convert frame to numpy array
+                frame_np = frame.cpu().numpy().transpose(1, 2, 0)  # [H, W, C]
+                # Convert from [-1, 1] to [0, 255]
+                frame_np = ((frame_np + 1.0) * 127.5).astype(np.uint8)
+                # Convert from RGB to BGR for OpenCV
+                frame_np = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+
+                if draw_bbox:
+                    # Get bounding boxes
+                    bboxes = batch['bbox'][b, t]  # Shape: [N, 4]
+                    for n in range(N):
+                        bbox = bboxes[n]  # [4]
+                        x1_norm, y1_norm, x2_norm, y2_norm = bbox.cpu().numpy()
+                        # Skip invalid bounding boxes
+                        if (x1_norm == x2_norm) and (y1_norm == y2_norm):
+                            continue
+                        x1 = int(x1_norm * W)
+                        y1 = int(y1_norm * H)
+                        x2 = int(x2_norm * W)
+                        y2 = int(y2_norm * H)
+                        # Ensure coordinates are within image bounds
+                        x1 = max(0, min(W - 1, x1))
+                        y1 = max(0, min(H - 1, y1))
+                        x2 = max(0, min(W - 1, x2))
+                        y2 = max(0, min(H - 1, y2))
+                        # Draw rectangle on frame_np
+                        cv2.rectangle(frame_np, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
+
+                # Convert from BGR back to RGB
+                frame_np = cv2.cvtColor(frame_np, cv2.COLOR_BGR2RGB)
+                # Convert frame_np back to tensor
+                frame_tensor = torch.from_numpy(frame_np.astype(np.float32).transpose(2, 0, 1) / 127.5 - 1.0).to(samples.device)
+                samples_with_annotations[b, t] = frame_tensor
+
+        return samples_with_annotations
