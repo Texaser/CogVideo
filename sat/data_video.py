@@ -385,8 +385,6 @@ class SFTDataset(Dataset):
             for root, dirnames, filenames in os.walk(data_dir):
                 for filename in filenames:
                     if filename.endswith(".json"):
-                        if len(self.video_paths) > 10:
-                            break
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
                             
@@ -403,7 +401,7 @@ class SFTDataset(Dataset):
                             '/mnt/bum/hanyi/data/hq-pose-sam/hq-poses/'
                         )
                         mask_base_path = os.path.splitext(mask_base_path)[0]  # Remove .mp4 extension
-                        
+
                         bbox_path = os.path.join(root, filename).replace("/mnt/mir/fan23j/data/hq-poses/", "/mnt/bum/hanyi/data/hq-bbox/")
 
                         with open(bbox_path, "r") as f:
