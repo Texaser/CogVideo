@@ -298,7 +298,7 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         self.register_buffer("freqs_sin", freqs_sin)
         self.register_buffer("freqs_cos", freqs_cos)
 
-        self.text_length = text_length
+        self.text_length = text_length + 40
         if learnable_pos_embed:
             num_patches = height * width * compressed_num_frames + text_length
             self.pos_embedding = nn.Parameter(torch.zeros(1, num_patches, int(hidden_size)), requires_grad=True)
@@ -585,9 +585,12 @@ class AdaLNMixin(BaseMixin):
         **kwargs,
     ):
         text_length = kwargs["text_length"]
-        # hidden_states (b,(n_t+t*n_i),d)
-        text_hidden_states = hidden_states[:, :text_length]  # (b,n,d)
-        img_hidden_states = hidden_states[:, text_length:]  # (b,(t n),d)
+        bbox_length = kwargs.get("bbox_length", 40)  # Total length of bbox tokens
+        
+        # Split hidden states into text, bbox, and image tokens
+        text_hidden_states = hidden_states[:, :text_length]  # (b,n_t,d)
+        bbox_hidden_states = hidden_states[:, text_length:text_length + bbox_length]  # (b,n_b,d)
+        img_hidden_states = hidden_states[:, text_length + bbox_length:]  # (b,t*n,d)
 
         layer = self.transformer.layers[kwargs["layer_id"]]
         adaLN_modulation = self.adaLN_modulations[kwargs["layer_id"]]
@@ -613,39 +616,67 @@ class AdaLNMixin(BaseMixin):
             text_gate_mlp.unsqueeze(1),
         )
 
-        # self full attention (b,(t n),d)
+        # Apply layernorm and modulation to each part
         img_attention_input = layer.input_layernorm(img_hidden_states)
         text_attention_input = layer.input_layernorm(text_hidden_states)
+        bbox_attention_input = layer.input_layernorm(bbox_hidden_states)
+        
         img_attention_input = modulate(img_attention_input, shift_msa, scale_msa)
         text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_msa)
+        bbox_attention_input = modulate(bbox_attention_input, shift_msa, scale_msa)
 
-        attention_input = torch.cat((text_attention_input, img_attention_input), dim=1)  # (b,n_t+t*n_i,d)
+        # Concatenate all parts
+        attention_input = torch.cat(
+            (text_attention_input, bbox_attention_input, img_attention_input), 
+            dim=1
+        )  # (b,n_t+n_b+t*n,d)
+        
+        # Pass through attention
         attention_output = layer.attention(attention_input, mask, **kwargs)
-        text_attention_output = attention_output[:, :text_length]  # (b,n,d)
-        img_attention_output = attention_output[:, text_length:]  # (b,(t n),d)
+        
+        # Split attention output
+        text_attention_output = attention_output[:, :text_length]  # (b,n_t,d)
+        bbox_attention_output = attention_output[:, text_length:text_length + bbox_length]  # (b,n_b,d)
+        img_attention_output = attention_output[:, text_length + bbox_length:]  # (b,t*n,d)
+
         if self.transformer.layernorm_order == "sandwich":
             text_attention_output = layer.third_layernorm(text_attention_output)
+            bbox_attention_output = layer.third_layernorm(bbox_attention_output)
             img_attention_output = layer.third_layernorm(img_attention_output)
-        img_hidden_states = img_hidden_states + gate_msa * img_attention_output  # (b,(t n),d)
-        text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output  # (b,n,d)
+            
+        img_hidden_states = img_hidden_states + gate_msa * img_attention_output
+        text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output
+        bbox_hidden_states = bbox_hidden_states + gate_msa * bbox_attention_output
 
-        # mlp (b,(t n),d)
-        img_mlp_input = layer.post_attention_layernorm(img_hidden_states)  # vision (b,(t n),d)
-        text_mlp_input = layer.post_attention_layernorm(text_hidden_states)  # language (b,n,d)
+        # MLP forward pass
+        img_mlp_input = layer.post_attention_layernorm(img_hidden_states)
+        text_mlp_input = layer.post_attention_layernorm(text_hidden_states)
+        bbox_mlp_input = layer.post_attention_layernorm(bbox_hidden_states)
+        
         img_mlp_input = modulate(img_mlp_input, shift_mlp, scale_mlp)
         text_mlp_input = modulate(text_mlp_input, text_shift_mlp, text_scale_mlp)
-        mlp_input = torch.cat((text_mlp_input, img_mlp_input), dim=1)  # (b,(n_t+t*n_i),d
+        bbox_mlp_input = modulate(bbox_mlp_input, shift_mlp, scale_mlp)
+
+        mlp_input = torch.cat((text_mlp_input, bbox_mlp_input, img_mlp_input), dim=1)
         mlp_output = layer.mlp(mlp_input, **kwargs)
-        img_mlp_output = mlp_output[:, text_length:]  # vision (b,(t n),d)
-        text_mlp_output = mlp_output[:, :text_length]  # language (b,n,d)
+        
+        text_mlp_output = mlp_output[:, :text_length]
+        bbox_mlp_output = mlp_output[:, text_length:text_length + bbox_length]
+        img_mlp_output = mlp_output[:, text_length + bbox_length:]
+
         if self.transformer.layernorm_order == "sandwich":
             text_mlp_output = layer.fourth_layernorm(text_mlp_output)
+            bbox_mlp_output = layer.fourth_layernorm(bbox_mlp_output)
             img_mlp_output = layer.fourth_layernorm(img_mlp_output)
 
-        img_hidden_states = img_hidden_states + gate_mlp * img_mlp_output  # vision (b,(t n),d)
-        text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output  # language (b,n,d)
+        img_hidden_states = img_hidden_states + gate_mlp * img_mlp_output
+        text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output
+        bbox_hidden_states = bbox_hidden_states + gate_mlp * bbox_mlp_output
 
-        hidden_states = torch.cat((text_hidden_states, img_hidden_states), dim=1)  # (b,(n_t+t*n_i),d)
+        hidden_states = torch.cat(
+            (text_hidden_states, bbox_hidden_states, img_hidden_states), 
+            dim=1
+        )
         return hidden_states
 
     def reinit(self, parent_model=None):
@@ -684,34 +715,48 @@ class AdaLNMixin(BaseMixin):
             scaling_attention_score=scaling_attention_score,
             **kwargs,
         )
-        # Check if this is cross attention based on encoder_outputs
+
+        # Check if this is cross attention
         is_cross = 'encoder_outputs' in kwargs and kwargs['encoder_outputs'] is not None
+        is_cross = False
         if is_cross:
             text_length = kwargs["text_length"]
+            bbox_length = kwargs.get("bbox_length", 40)
+            players_per_frame = kwargs.get("players_per_frame", 10)  # Default 10 players
+            num_frames = kwargs.get("num_frames", 49)  # Default 49 frames
 
-            # Extract queries and keys for image and text tokens
-            query_layer_image = query_layer[:, :, text_length:, :]  # [B, H, S_image, D]
-            key_layer_text = key_layer[:, :, :text_length, :]       # [B, H, S_text, D]
+            # Extract queries for player tokens only
+            query_layer_players = query_layer[:, :, text_length:text_length + bbox_length, :]  # [B, H, N_players, D]
+            key_layer_text = key_layer[:, :, :text_length, :]  # [B, H, S_text, D]
 
-            # Check if S_image and S_text are greater than zero
-            S_image = query_layer_image.size(2)
+            # Check dimensions
+            N_players = query_layer_players.size(2)
             S_text = key_layer_text.size(2)
 
-            if S_image == 0 or S_text == 0:
-                # Skip attention computation for this case
+            if N_players == 0 or S_text == 0:
                 return context_layer
 
             # Scale queries if necessary
             if scaling_attention_score:
-                query_layer_image = query_layer_image / math.sqrt(query_layer_image.shape[-1])
+                query_layer_players = query_layer_players / math.sqrt(query_layer_players.shape[-1])
 
-            # Compute attention scores between image queries and text keys
-            attention_scores = torch.matmul(query_layer_image, key_layer_text.transpose(-1, -2))  # [B, H, S_image, S_text]
+            # Compute attention scores between player queries and text keys
+            attention_scores = torch.matmul(query_layer_players, key_layer_text.transpose(-1, -2))  # [B, H, N_players, S_text]
 
             # Compute attention probabilities
             attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
 
-            # Determine layer position for storing attention maps
+            # Reshape attention for visualization
+            # Reshape from [B, H, N_players, S_text] to [B, H, num_frames, players_per_frame, S_text]
+            attention_probs = attention_probs.view(
+                attention_probs.shape[0], 
+                attention_probs.shape[1],
+                num_frames,
+                players_per_frame,
+                attention_probs.shape[-1]
+            )
+
+            # Determine layer position
             layer_id = kwargs["layer_id"]
             if layer_id < self.num_layers // 3:
                 pos = "down"
@@ -720,7 +765,7 @@ class AdaLNMixin(BaseMixin):
             else:
                 pos = "up"
 
-            # Store attention maps with text length
+            # Store attention maps
             self.attention_store.store_attention(attention_probs, pos, text_length)
 
         return context_layer

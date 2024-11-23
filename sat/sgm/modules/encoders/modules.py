@@ -72,7 +72,7 @@ class AbstractEmbModel(nn.Module):
 
 class GeneralConditioner(nn.Module):
     OUTPUT_DIM2KEYS = {2: "vector", 3: "crossattn", 4: "concat", 5: "concat"}
-    KEY2CATDIM = {"vector": 1, "crossattn": 2, "concat": 1}
+    KEY2CATDIM = {"vector": 1, "crossattn": 1, "concat": 1}
 
     def __init__(self, emb_models: Union[List, ListConfig], cor_embs=[], cor_p=[]):
         super().__init__()
@@ -154,6 +154,7 @@ class GeneralConditioner(nn.Module):
         ), f"encoder outputs must be tensors or a sequence, but got {type(emb_out)}"
         if not isinstance(emb_out, (list, tuple)):
             emb_out = [emb_out]
+
         for emb in emb_out:
             out_key = self.OUTPUT_DIM2KEYS[emb.dim()]
             if embedder.ucg_rate > 0.0 and embedder.legacy_ucg_val is None:
@@ -348,3 +349,142 @@ class PrecomputedT5Embedder(AbstractEmbModel):
 
     def encode(self, text):
         return self(text)
+
+
+class BboxTokenEmbedder(AbstractEmbModel):
+    def __init__(
+        self, 
+        hidden_dim, 
+        max_length=40,
+        max_distance=2,
+        token_dim=1920,
+        tokens_per_trajectory=4,
+        num_attn_heads=8,
+        device="cuda",
+        dtype=torch.bfloat16
+    ):
+        super().__init__()
+        self.max_distance = max_distance
+        self.max_length = max_length
+        self.hidden_dim = hidden_dim
+        self.token_dim = token_dim
+        self.tokens_per_trajectory = tokens_per_trajectory
+        self.device = device
+        self.dtype = dtype
+
+        # Relative position embeddings
+        self.dist_embedding = nn.Embedding(max_distance + 1, hidden_dim).to(device).to(dtype)
+        
+        # Main attention for processing trajectory
+        self.attention = nn.MultiheadAttention(hidden_dim, num_attn_heads, batch_first=True).to(device).to(dtype)
+        
+        # Learnable token queries for attention pooling
+        self.token_queries = nn.Parameter(torch.randn(1, tokens_per_trajectory, hidden_dim, dtype=dtype)).to(device)
+        self.token_attention = nn.MultiheadAttention(hidden_dim, num_attn_heads, batch_first=True).to(device).to(dtype)
+            
+        # Initial projection layer
+        self.input_proj = nn.Linear(4, hidden_dim).to(device).to(dtype)
+            
+        # Final projection to desired token dimension
+        self.token_proj = nn.Linear(hidden_dim, token_dim).to(device).to(dtype)
+        
+        # Layer norms for stability
+        self.norm1 = nn.LayerNorm(hidden_dim).to(device).to(dtype)
+        self.norm2 = nn.LayerNorm(hidden_dim).to(device).to(dtype)
+        
+    def compute_relative_positions(self, trajectory):
+        """Compute relative position matrix for a sequence"""
+        batch_size, seq_len, _ = trajectory.shape
+        positions = torch.arange(seq_len, device=self.device)
+        rel_pos = (positions.unsqueeze(0) - positions.unsqueeze(1)).abs()
+        rel_pos = torch.clamp(rel_pos, 0, self.max_distance)
+        
+        # Get embeddings [seq_len, seq_len, hidden_dim]
+        rel_pos_emb = self.dist_embedding(rel_pos)
+        
+        # Expand for batch dimension [batch_size, seq_len, seq_len, hidden_dim]
+        rel_pos_emb = rel_pos_emb.unsqueeze(0).expand(batch_size, -1, -1, -1)
+        
+        # Reshape to match trajectory shape
+        rel_pos_emb = rel_pos_emb.sum(dim=2)  # [batch_size, seq_len, hidden_dim]
+        
+        return rel_pos_emb
+        
+    def process_single_player_trajectory(self, trajectory):
+        """Process a single player's trajectory
+        Args:
+            trajectory: [seq_len, 4] tensor of bbox coordinates
+        """
+        # Ensure trajectory is on correct device and dtype
+        trajectory = trajectory.to(device=self.device, dtype=self.dtype)
+        
+        # Add batch dimension
+        trajectory = trajectory.unsqueeze(0)  # [1, seq_len, 4]
+        
+        # Project to hidden dim
+        trajectory = self.input_proj(trajectory)  # [1, seq_len, hidden_dim]
+        
+        # Add position embeddings
+        rel_pos_emb = self.compute_relative_positions(trajectory)
+        trajectory = trajectory + rel_pos_emb
+        
+        # Process sequence with attention
+        sequence, _ = self.attention(trajectory, trajectory, trajectory)
+        sequence = self.norm1(sequence)
+        
+        # Extract tokens using learned queries
+        tokens, _ = self.token_attention(
+            self.token_queries,
+            sequence,
+            sequence
+        )
+        tokens = self.norm2(tokens)
+        
+        # Project to final dimension
+        tokens = self.token_proj(tokens)
+        
+        return tokens.squeeze(0)  # [tokens_per_trajectory, token_dim]
+        
+    def forward(self, bbox_tensor):
+        """
+        Args:
+            bbox_tensor: [batch_size, num_frames, num_players, 4] bbox coordinates
+                where batch_size=1, num_frames=49, num_players=10
+        Returns:
+            tokens: [1, max_length, token_dim]
+        """
+        # Ensure input is on correct device and dtype
+        bbox_tensor = bbox_tensor.to(device=self.device, dtype=self.dtype)
+        
+        batch_size, num_frames, num_players, _ = bbox_tensor.shape
+        
+        all_tokens = []
+        # Process each batch
+        for b in range(batch_size):
+            # Process each player's trajectory
+            for p in range(num_players):
+                # Extract single player trajectory [num_frames, 4]
+                player_trajectory = bbox_tensor[b, :, p]
+                # Process trajectory
+                player_tokens = self.process_single_player_trajectory(player_trajectory)
+                all_tokens.append(player_tokens)
+                
+        # Concatenate all tokens
+        tokens = torch.cat(all_tokens, dim=0)  # [batch_size * num_players * tokens_per_trajectory, token_dim]
+        
+        # Pad or truncate to max_length
+        if tokens.shape[0] < self.max_length:
+            padding = torch.zeros(
+                self.max_length - tokens.shape[0], 
+                self.token_dim, 
+                device=self.device,
+                dtype=self.dtype
+            )
+            tokens = torch.cat([tokens, padding], dim=0)
+        else:
+            tokens = tokens[:self.max_length]
+            
+        return tokens.unsqueeze(0)  # [1, max_length, token_dim]
+
+    def encode(self, bbox_tensor):
+        return self(bbox_tensor)
