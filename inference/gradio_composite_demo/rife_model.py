@@ -10,7 +10,6 @@ import skvideo.io
 from rife.RIFE_HDv3 import Model
 
 logger = logging.getLogger(__name__)
-
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -19,7 +18,7 @@ def pad_image(img, scale):
     tmp = max(32, int(32 / scale))
     ph = ((h - 1) // tmp + 1) * tmp
     pw = ((w - 1) // tmp + 1) * tmp
-    padding = (0, pw - w, 0,  ph - h)
+    padding = (0, 0, pw - w, ph - h)
     return F.pad(img, padding)
 
 
@@ -37,8 +36,7 @@ def make_inference(model, I0, I1, upscale_amount, n):
 
 @torch.inference_mode()
 def ssim_interpolation_rife(model, samples, exp=1, upscale_amount=1, output_device="cpu"):
-    print(f"samples dtype:{samples.dtype}")
-    print(f"samples shape:{samples.shape}")
+
     output = []
     # [f, c, h, w]
     for b in range(samples.shape[0]):
@@ -46,8 +44,7 @@ def ssim_interpolation_rife(model, samples, exp=1, upscale_amount=1, output_devi
         _, _, h, w = frame.shape
         I0 = samples[b : b + 1]
         I1 = samples[b + 1 : b + 2] if b + 2 < samples.shape[0] else samples[-1:]
-        I0 = pad_image(I0, upscale_amount).to(torch.float)
-        I1 = pad_image(I1, upscale_amount).to(torch.float)
+        I1 = pad_image(I1, upscale_amount)
         # [c, h, w]
         I0_small = F.interpolate(I0, (32, 32), mode="bilinear", align_corners=False)
         I1_small = F.interpolate(I1, (32, 32), mode="bilinear", align_corners=False)
@@ -56,7 +53,7 @@ def ssim_interpolation_rife(model, samples, exp=1, upscale_amount=1, output_devi
 
         if ssim > 0.996:
             I1 = I0
-            I1 = I1
+            I1 = pad_image(I1, upscale_amount)
             I1 = make_inference(model, I0, I1, upscale_amount, 1)
 
             I1_small = F.interpolate(I1[0], (32, 32), mode="bilinear", align_corners=False)
@@ -75,7 +72,6 @@ def ssim_interpolation_rife(model, samples, exp=1, upscale_amount=1, output_devi
         frame = pad_image(frame, upscale_amount)
         tmp_output = [frame] + tmp_output
         for i, frame in enumerate(tmp_output):
-            frame = F.interpolate(frame, size=(h, w))
             output.append(frame.to(output_device))
     return output
 
@@ -103,13 +99,9 @@ def rife_inference_with_path(model, video_path):
     pt_frame_data = []
     pt_frame = skvideo.io.vreader(video_path)
     for frame in pt_frame:
-        # BGR to RGB
-        frame_rgb = frame[..., ::-1]
-        frame_rgb = frame_rgb.copy()
-        tensor = torch.from_numpy(frame_rgb).float().to("cpu", non_blocking=True).float() / 255.0
         pt_frame_data.append(
-            tensor.permute(2, 0, 1)
-        )  # to [c, h, w,]
+            torch.from_numpy(np.transpose(frame, (2, 0, 1))).to("cpu", non_blocking=True).float() / 255.0
+        )
 
     pt_frame = torch.from_numpy(np.stack(pt_frame_data))
     pt_frame = pt_frame.to(device)
@@ -125,13 +117,11 @@ def rife_inference_with_path(model, video_path):
 
 
 def rife_inference_with_latents(model, latents):
-    pbar = utils.ProgressBar(latents.shape[1], desc="RIFE inference")
     rife_results = []
     latents = latents.to(device)
     for i in range(latents.size(0)):
         #  [f, c, w, h]
         latent = latents[i]
-
         frames = ssim_interpolation_rife(model, latent)
         pt_image = torch.stack([frames[i].squeeze(0) for i in range(len(frames))])  # (to [f, c, w, h])
         rife_results.append(pt_image)
