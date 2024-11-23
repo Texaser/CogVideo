@@ -6,8 +6,8 @@ model:
     noised_image_dropout: 0.05
     noise_last_frame: true
     not_trainable_prefixes: ["all"] ## Using Lora
-    pixel_space_loss: true
-    noise_mode: "segm" # bbox, segm
+    pixel_space_loss: false
+    noise_mode: "bbox" # bbox, segm
 
     log_keys:
         - txt

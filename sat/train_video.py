@@ -101,6 +101,8 @@ def log_video(batch, model, args, only_log_video_latents=False):
                 torch.save(videos["latents"], os.path.join(path, "latents.pt"))
             else:
                 for k in videos:
+                    if k == "txt":
+                        continue
                     samples = (videos[k] + 1.0) / 2.0
                     filename = "{}_gs-{:06}".format(k, args.iteration)
 
