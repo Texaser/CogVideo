@@ -372,7 +372,7 @@ class SFTDataset(Dataset):
 
         self.video_paths = []
         self.captions = []
-        # self.tracklets = []
+        self.tracklets = []
         # self.pose_tracklets = []
         self.mask_paths = []
 
@@ -405,6 +405,14 @@ class SFTDataset(Dataset):
                         )
                         mask_base_path = os.path.splitext(mask_base_path)[0]  # Remove .mp4 extension
 
+                        # bounding_boxes = data['bounding_boxes']
+                        bbox_path = os.path.join(root, filename).replace("/mnt/mir/fan23j/data/hq-poses/", "/mnt/bum/hanyi/data/hq-bbox/")
+                        # bounding_boxes = data[bbox_path]
+                        with open(bbox_path, "r") as f:
+                            bbox_data = json.load(f)
+                        bounding_boxes = bbox_data['bounding_boxes']
+
+
                         # Check if all player masks exist
                         player_mask_paths = []
                         all_masks_exist = True
@@ -420,11 +428,8 @@ class SFTDataset(Dataset):
                         if not all_masks_exist:
                             continue
 
-
-                       # bounding_boxes = data['bounding_boxes']
-                       #trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
-                       # self.tracklets.append(trajectory_data)
-                        #self.pose_tracklets.append(keypoints_data)  # Store the pose data
+                        trajectory_data = self.encode_bbox_tracklet(bounding_boxes)
+                        self.tracklets.append(trajectory_data)
                         self.mask_paths.append(player_mask_paths)
                         pbar.update(1)
 
@@ -458,7 +463,7 @@ class SFTDataset(Dataset):
         )
         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-        #tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
+        tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
         #pose_frms = self.pose_tracklets[index][torch.tensor(indices.tolist())][:num_frames]  # Get pose data
 
         tensor_frms = pad_last_frame(
@@ -469,12 +474,12 @@ class SFTDataset(Dataset):
             tensor_frms, self.video_size, reshape_mode="center"
         )
         tensor_frms = (tensor_frms - 127.5) / 127.5
-        #tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
+        tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
         #pose_frms = self.adjust_keypoints(pose_frms, scale, top, left, orig_w, orig_h)  # Adjust keypoints
         item = {
             "mp4": tensor_frms,
             "mask": mask_frms,
-            # "bbox": tracklet_frms,
+            "bbox": tracklet_frms,
             # "pose": pose_frms,
             "txt": self.captions[index],
             "num_frames": num_frames,
@@ -482,30 +487,30 @@ class SFTDataset(Dataset):
         }
         return item
 
-    # def adjust_bounding_boxes(self, bounding_boxes, scale, top, left, orig_w, orig_h):
-    #     # Convert normalized coordinates to pixel coordinates in the original frame
-    #     bounding_boxes[:, :, 0] *= orig_w  # x1
-    #     bounding_boxes[:, :, 1] *= orig_h  # y1
-    #     bounding_boxes[:, :, 2] *= orig_w  # x2
-    #     bounding_boxes[:, :, 3] *= orig_h  # y2
+    def adjust_bounding_boxes(self, bounding_boxes, scale, top, left, orig_w, orig_h):
+        # Convert normalized coordinates to pixel coordinates in the original frame
+        bounding_boxes[:, :, 0] *= orig_w  # x1
+        bounding_boxes[:, :, 1] *= orig_h  # y1
+        bounding_boxes[:, :, 2] *= orig_w  # x2
+        bounding_boxes[:, :, 3] *= orig_h  # y2
 
-    #     # Apply scaling
-    #     bounding_boxes *= scale
+        # Apply scaling
+        bounding_boxes *= scale
 
-    #     # Apply cropping offsets
-    #     bounding_boxes[:, :, [0, 2]] -= left
-    #     bounding_boxes[:, :, [1, 3]] -= top
+        # Apply cropping offsets
+        bounding_boxes[:, :, [0, 2]] -= left
+        bounding_boxes[:, :, [1, 3]] -= top
 
-    #     # Convert back to normalized coordinates in the new frame size
-    #     bounding_boxes[:, :, 0] /= self.video_size[1]  # x1
-    #     bounding_boxes[:, :, 1] /= self.video_size[0]  # y1
-    #     bounding_boxes[:, :, 2] /= self.video_size[1]  # x2
-    #     bounding_boxes[:, :, 3] /= self.video_size[0]  # y2
+        # Convert back to normalized coordinates in the new frame size
+        bounding_boxes[:, :, 0] /= self.video_size[1]  # x1
+        bounding_boxes[:, :, 1] /= self.video_size[0]  # y1
+        bounding_boxes[:, :, 2] /= self.video_size[1]  # x2
+        bounding_boxes[:, :, 3] /= self.video_size[0]  # y2
 
-    #     # Clip values to [0, 1]
-    #     bounding_boxes = bounding_boxes.clip(0, 1)
+        # Clip values to [0, 1]
+        bounding_boxes = bounding_boxes.clip(0, 1)
 
-    #     return bounding_boxes
+        return bounding_boxes
 
     # def adjust_keypoints(self, keypoints, scale, top, left, orig_w, orig_h):
     #     # Convert normalized coordinates to pixel coordinates in the original frame
@@ -528,32 +533,20 @@ class SFTDataset(Dataset):
 
     #     return keypoints
 
-    # def encode_bbox_tracklet(self, bounding_boxes):
-    #     num_frames = len(bounding_boxes)
-    #     num_players = 10
-    #     num_keypoints = 17
+    def encode_bbox_tracklet(self, bounding_boxes):
+        num_frames = len(bounding_boxes)
+        num_players = 10
 
-    #     trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
-    #     keypoints_data = [[[[0, 0] for _ in range(num_keypoints)] for _ in range(num_players)] for _ in range(num_frames)]
+        trajectory_data = [[[0, 0, 0, 0] for _ in range(num_players)] for _ in range(num_frames)]
 
-    #     for frame_idx, frame in enumerate(bounding_boxes):
-    #         assert len(frame['bounding_box_instances']) == num_players
-    #         for player_idx, box in enumerate(frame['bounding_box_instances']):
-    #             if box is not None:
-    #                 trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
-    #                 if 'keypoints' in box and box['keypoints']:
-    #                     keypoints = box['keypoints']
-    #                     if len(keypoints) == 0:
-    #                         # pad with zeros
-    #                         keypoints_xy = [[0, 0] for _ in range(num_keypoints)]
-    #                     else:
-    #                         keypoints_xy = [[kp[0], kp[1]] for kp in keypoints]
-    #                     keypoints_data[frame_idx][player_idx] = keypoints_xy
+        for frame_idx, frame in enumerate(bounding_boxes):
+            for player_idx, box in enumerate(frame['bounding_box_instances']):
+                if box is not None:
+                    trajectory_data[frame_idx][player_idx] = [box['x1'], box['y1'], box['x2'], box['y2']]
 
-    #     # Convert to tensors
-    #     trajectory_data = torch.tensor(trajectory_data, dtype=torch.float16)
-    #     keypoints_data = torch.tensor(keypoints_data, dtype=torch.float16)
-    #     return trajectory_data, keypoints_data
+        # Convert to tensors
+        trajectory_data = torch.tensor(trajectory_data, dtype=torch.float16)
+        return trajectory_data
 
     def load_and_process_masks(self, mask_paths, indices, num_frames, original_size):
         """

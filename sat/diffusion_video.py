@@ -64,7 +64,7 @@ class SATVideoDiffusionEngine(nn.Module):
         self.use_color_conditions = model_config.get("use_color_conditions", False)
 
         # Add noise_mode configuration option
-        self.noise_mode = model_config.get('noise_mode', 'pose')  # 'bbox', 'pose', or 'both'
+        self.noise_mode = model_config.get('noise_mode', 'bbox')  # 'bbox', 'pose', or 'both'
 
         if args.fp16:
             dtype = torch.float16
@@ -227,40 +227,164 @@ class SATVideoDiffusionEngine(nn.Module):
         image = image + image_noise
         return image    
 
-    def add_noised_conditions_to_frames(self, image, segm_tensor, noise_mode='segm'):
-        """
-        Injects Gaussian noise into each frame of the image based on the segmentation masks,
-        excluding the first frame which retains the reference image with added noise.
-        """
-        B, C, T, H, W = image.shape
-        _, _, num_objects, _, _ = segm_tensor.shape  # [B, T, 10, H, W]
+    # def add_noised_conditions_to_frames(self, image, segm_tensor, noise_mode='segm'):
+    #     """
+    #     Injects Gaussian noise into each frame of the image based on the segmentation masks,
+    #     excluding the first frame which retains the reference image with added noise.
+    #     """
+    #     B, C, T, H, W = image.shape
+    #     _, _, num_objects, _, _ = segm_tensor.shape  # [B, T, 10, H, W]
 
-        # Initialize a tensor to store noise masks
-        noise_masks = torch.zeros_like(image)
+    #     # Initialize a tensor to store noise masks
+    #     noise_masks = torch.zeros_like(image)
 
-        # Only add Gaussian noise to frames after the first
-        for b in range(B):
-            for t in range(1, T-1):
-                # Process segmentation masks for each object
-                for obj_idx in range(num_objects):
-                    # Get segmentation mask for current object
-                    mask = segm_tensor[b, t, obj_idx]  # [H, W]
+    #     # Only add Gaussian noise to frames after the first
+    #     for b in range(B):
+    #         for t in range(1, T-1):
+    #             # Process segmentation masks for each object
+    #             for obj_idx in range(num_objects):
+    #                 # Get segmentation mask for current object
+    #                 mask = segm_tensor[b, t, obj_idx]  # [H, W]
 
-                    # Skip if mask is empty
-                    if not torch.any(mask):
-                        continue
+    #                 # Skip if mask is empty
+    #                 if not torch.any(mask):
+    #                     continue
 
-                    # Generate noise for masked region
-                    noise = torch.randn(C, H, W, device=image.device, dtype=image.dtype)
-                    scaled_noise = noise * mask.unsqueeze(0)  # Scale noise by mask
+    #                 # Generate noise for masked region
+    #                 noise = torch.randn(C, H, W, device=image.device, dtype=image.dtype)
+    #                 scaled_noise = noise * mask.unsqueeze(0)  # Scale noise by mask
 
-                    # Add noise to the image in place
-                    image[b, :, t] += scaled_noise
+    #                 # Add noise to the image in place
+    #                 image[b, :, t] += scaled_noise
                     
-                    # Store the noise mask
-                    noise_masks[b, :, t] += scaled_noise
+    #                 # Store the noise mask
+    #                 noise_masks[b, :, t] += scaled_noise
 
-        return image, noise_masks
+    #     return image, noise_masks
+
+    def add_noised_conditions_to_frames(self, image, bbox_tensor, noise_mode='bbox'):
+            """
+            Injects Gaussian noise into each frame of the image based on the bounding boxes and/or pose keypoints,
+            excluding the first frame which retains the reference image with added noise.
+            Returns the modified image and the noise masks for visualization.
+            """
+            B, C, T, H, W = image.shape  # Assuming image shape is [B, C, T, H, W]
+            _, _, N, _ = bbox_tensor.shape  # N is the number of bounding boxes per frame
+
+            # Initialize a tensor to store noise masks
+            noise_masks = torch.zeros_like(image)
+
+            # Only add Gaussian noise to frames after the first
+            for b in range(B):
+                for t in range(1, T):
+                    if noise_mode in ('bbox', 'both'):
+                        # Process bounding boxes
+                        bboxes = bbox_tensor[b, t]  # Shape: [N, 4]
+                        for n in range(N):
+                            bbox = bboxes[n]
+                            x1_norm, y1_norm, x2_norm, y2_norm = bbox
+
+                            # Convert normalized coordinates to pixel coordinates
+                            x1 = x1_norm * W
+                            y1 = y1_norm * H
+                            x2 = x2_norm * W
+                            y2 = y2_norm * H
+
+                            # Ensure coordinates are in the correct order
+                            x1, x2 = sorted([x1.item(), x2.item()])
+                            y1, y2 = sorted([y1.item(), y2.item()])
+
+                            # Convert to integers and clamp
+                            x1 = int(max(0, min(W - 1, x1)))
+                            y1 = int(max(0, min(H - 1, y1)))
+                            x2 = int(max(x1 + 1, min(W, x2)))
+                            y2 = int(max(y1 + 1, min(H, y2)))
+
+                            h = y2 - y1
+                            w = x2 - x1
+
+                            if h <= 0 or w <= 0:
+                                continue  # Skip invalid bounding boxes
+
+                            # Generate a Gaussian mask
+                            y_coords = torch.arange(h, device=image.device).unsqueeze(1).repeat(1, w)
+                            x_coords = torch.arange(w, device=image.device).unsqueeze(0).repeat(h, 1)
+                            mx = (h - 1) / 2.0
+                            my = (w - 1) / 2.0
+                            sx = h / 3.0
+                            sy = w / 3.0
+                            gaussian = (1 / (2 * math.pi * sx * sy)) * torch.exp(
+                                -(((x_coords - my) ** 2) / (2 * sy ** 2) + ((y_coords - mx) ** 2) / (2 * sx ** 2))
+                            )
+                            gaussian = gaussian / gaussian.max()
+                            gaussian = gaussian.to(image.dtype)
+
+                            encoded_gaussian = gaussian.unsqueeze(0)
+
+                            # Generate noise scaled by the encoded Gaussian mask
+                            noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
+
+                            # Add noise to the image in place
+                            image[b, :, t, y1:y2, x1:x2] += noise
+
+                            # Store the noise mask
+                            noise_masks[b, :, t, y1:y2, x1:x2] = noise
+
+                    if noise_mode in ('pose', 'both'):
+                        # Process pose keypoints
+                        keypoints = pose_tensor[b, t]  # Shape: [N, K, 2]
+                        for n in range(N):
+                            player_keypoints = keypoints[n]  # Shape: [K, 2]
+                            for k in range(K):
+                                x_norm, y_norm = player_keypoints[k]
+
+                                # Convert normalized coordinates to pixel coordinates
+                                x = x_norm * W
+                                y = y_norm * H
+
+                                # Skip invalid keypoints (e.g., zero coordinates)
+                                if x < 0 or x >= W or y < 0 or y >= H:
+                                    continue
+
+                                x = int(torch.clamp(x, 0, W - 1).item())
+                                y = int(torch.clamp(y, 0, H - 1).item())
+
+                                # Define a small window around the keypoint
+                                window_size = 15  # Adjust this value as needed
+                                x1 = max(0, x - window_size // 2)
+                                y1 = max(0, y - window_size // 2)
+                                x2 = min(W, x + window_size // 2 + 1)
+                                y2 = min(H, y + window_size // 2 + 1)
+
+                                h = y2 - y1
+                                w = x2 - x1
+
+                                if h <= 0 or w <= 0:
+                                    continue
+
+                                # Generate a Gaussian mask centered at the keypoint
+                                y_coords = torch.arange(y1, y2, device=image.device).unsqueeze(1).repeat(1, w) - y
+                                x_coords = torch.arange(x1, x2, device=image.device).unsqueeze(0).repeat(h, 1) - x
+                                sx = h / 3.0
+                                sy = w / 3.0
+                                gaussian = (1 / (2 * math.pi * sx * sy)) * torch.exp(
+                                    -(((x_coords) ** 2) / (2 * sy ** 2) + ((y_coords) ** 2) / (2 * sx ** 2))
+                                )
+                                gaussian = gaussian / gaussian.max()
+                                gaussian = gaussian.to(image.dtype)
+
+                                encoded_gaussian = gaussian.unsqueeze(0)
+
+                                # Generate noise scaled by the encoded Gaussian mask
+                                noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
+
+                                # Add noise to the image in place
+                                image[b, :, t, y1:y2, x1:x2] += noise
+
+                                # Store the noise mask
+                                noise_masks[b, :, t, y1:y2, x1:x2] = noise
+            #self.write_noise_masks(noise_masks)
+            return image, noise_masks
 
     def add_color_conditions_to_frames(self, image, segm_tensor):
         """
@@ -367,8 +491,9 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
 
-            # Add noise based on segmentation masks
-            #image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask']) if self.use_color_conditions else self.add_noised_conditions_to_frames(image, batch['mask'])
+            image, noise_masks = self.add_noised_conditions_to_frames(
+                image, batch['bbox'], noise_mode=self.noise_mode
+            )
 
             image = self.encode_first_stage(image, batch)
 
@@ -561,7 +686,10 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
 
-            #image, noise_masks = self.add_color_conditions_to_frames(image, batch['mask'])
+            # Add noise based on the selected noise_mode
+            image, noise_masks = self.add_noised_conditions_to_frames(
+                image, batch['bbox'], noise_mode=self.noise_mode
+            )
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
 
@@ -583,6 +711,10 @@ class SATVideoDiffusionEngine(nn.Module):
                 # Visualize samples with segmentation overlay
                 samples_with_segm = self.draw_segmentation_overlay(samples.clone(), batch)
                 log["samples_segm"] = samples_with_segm
+
+                # Draw bounding boxes on the samples
+                samples_with_bbox = self.draw_annotations(samples.clone(), batch, draw_bbox=True, draw_pose=False)
+                log["samples_bbox"] = samples_with_bbox
                 
         return log
     
@@ -654,3 +786,62 @@ class SATVideoDiffusionEngine(nn.Module):
                 samples_with_overlay[b, t] = frame_tensor
 
         return samples_with_overlay
+
+    def draw_annotations(self, samples, batch, draw_bbox=True, draw_pose=True):
+        """
+        Draws bounding boxes and/or pose annotations on the decoded video samples.
+
+        Args:
+            samples (Tensor): Decoded video samples of shape [B, T, C, H, W].
+            batch (Dict): Batch dictionary containing 'bbox' and 'pose'.
+            draw_bbox (bool): Whether to draw bounding boxes.
+            draw_pose (bool): Whether to draw pose keypoints.
+
+        Returns:
+            Tensor: Video samples with annotations drawn, same shape as input samples.
+        """
+        B, T, C, H, W = samples.shape
+        N = batch['bbox'].shape[2]  # Number of bounding boxes per frame
+
+        samples_with_annotations = samples.clone()
+
+        for b in range(B):
+            for t in range(T):
+                frame = samples[b, t]  # Shape: [C, H, W]
+                # Convert frame to numpy array
+                frame_np = frame.cpu().numpy().transpose(1, 2, 0)  # [H, W, C]
+                # Convert from [-1, 1] to [0, 255]
+                frame_np = ((frame_np + 1.0) * 127.5).astype(np.uint8)
+                # Convert from RGB to BGR for OpenCV
+                frame_np = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+
+                if draw_bbox:
+                    # Get bounding boxes
+                    bboxes = batch['bbox'][b, t]  # Shape: [N, 4]
+                    for n in range(N):
+                        bbox = bboxes[n]  # [4]
+                        x1_norm, y1_norm, x2_norm, y2_norm = bbox.cpu().numpy()
+                        # Skip invalid bounding boxes
+                        if (x1_norm == x2_norm) and (y1_norm == y2_norm):
+                            continue
+                        x1 = int(x1_norm * W)
+                        y1 = int(y1_norm * H)
+                        x2 = int(x2_norm * W)
+                        y2 = int(y2_norm * H)
+                        # Ensure coordinates are within image bounds
+                        x1 = max(0, min(W - 1, x1))
+                        y1 = max(0, min(H - 1, y1))
+                        x2 = max(0, min(W - 1, x2))
+                        y2 = max(0, min(H - 1, y2))
+                        # Draw rectangle on frame_np
+                        cv2.rectangle(frame_np, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
+
+               
+
+                # Convert from BGR back to RGB
+                frame_np = cv2.cvtColor(frame_np, cv2.COLOR_BGR2RGB)
+                # Convert frame_np back to tensor
+                frame_tensor = torch.from_numpy(frame_np.astype(np.float32).transpose(2, 0, 1) / 127.5 - 1.0).to(samples.device)
+                samples_with_annotations[b, t] = frame_tensor
+
+        return samples_with_annotations
