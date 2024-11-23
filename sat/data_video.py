@@ -389,9 +389,6 @@ class SFTDataset(Dataset):
                             data = json.load(f)
                             
                         caption = data['caption']
-                        # filter free throw actions
-                        # if caption not in ("A basketball player making a free throw", "A basketball player missing a free throw"):
-                        #     continue
                         self.captions.append(caption)
 
                         # TODO: fix path in annotations
@@ -421,10 +418,10 @@ class SFTDataset(Dataset):
                             continue
 
 
-                       # bounding_boxes = data['bounding_boxes']
-                       #trajectory_data, keypoints_data = self.encode_bbox_tracklet(bounding_boxes)
-                       # self.tracklets.append(trajectory_data)
-                        #self.pose_tracklets.append(keypoints_data)  # Store the pose data
+                        bounding_boxes = data['bounding_boxes']
+                        trajectory_data = self.encode_bbox_tracklet(bounding_boxes)
+                        self.tracklets.append(trajectory_data)
+                       
                         self.mask_paths.append(player_mask_paths)
                         pbar.update(1)
 
@@ -458,8 +455,7 @@ class SFTDataset(Dataset):
         )
         tensor_frms = torch.from_numpy(temp_frms) if type(temp_frms) is not torch.Tensor else temp_frms
         tensor_frms = tensor_frms[torch.tensor((indices - start).tolist())]
-        #tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
-        #pose_frms = self.pose_tracklets[index][torch.tensor(indices.tolist())][:num_frames]  # Get pose data
+        tracklet_frms = self.tracklets[index][torch.tensor(indices.tolist())][:num_frames]
 
         tensor_frms = pad_last_frame(
             tensor_frms, self.max_num_frames
@@ -470,12 +466,12 @@ class SFTDataset(Dataset):
         )
         tensor_frms = (tensor_frms - 127.5) / 127.5
         #tracklet_frms = self.adjust_bounding_boxes(tracklet_frms, scale, top, left, orig_w, orig_h)
-        #pose_frms = self.adjust_keypoints(pose_frms, scale, top, left, orig_w, orig_h)  # Adjust keypoints
+      
         item = {
             "mp4": tensor_frms,
             "mask": mask_frms,
-            # "bbox": tracklet_frms,
-            # "pose": pose_frms,
+            "bbox": tracklet_frms,
+
             "txt": self.captions[index],
             "num_frames": num_frames,
             "fps": self.fps,
