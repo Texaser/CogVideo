@@ -385,8 +385,8 @@ class SFTDataset(Dataset):
             for root, dirnames, filenames in os.walk(data_dir):
                 for filename in filenames:
                     if filename.endswith(".json"):
-                        # if len(self.video_paths) > 10:
-                        #     break
+                        if len(self.video_paths) > 10:
+                            break
                         with open(os.path.join(root, filename), "r") as f:
                             data = json.load(f)
                             

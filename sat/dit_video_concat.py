@@ -18,7 +18,11 @@ from sgm.modules.diffusionmodules.util import (
     timestep_embedding,
 )
 from sat.ops.layernorm import LayerNorm, RMSNorm
-
+from typing import Dict, List
+import matplotlib.pyplot as plt
+from datetime import datetime
+import os
+import math
 
 class ImagePatchEmbeddingMixin(BaseMixin):
     def __init__(
@@ -434,6 +438,105 @@ class SwiGLUMixin(BaseMixin):
         x = origin.dense_4h_to_h(hidden)
         return x
 
+class AttentionStore:
+    def __init__(self, save_dir="attention_vis"):
+        self.step_store = self.get_empty_store()
+        self.attention_store = {}
+        self.save_dir = save_dir
+        os.makedirs(save_dir, exist_ok=True)
+        self.step_count = 0
+        
+    @staticmethod
+    def get_empty_store():
+        return {
+            "down_cross": [],
+            "mid_cross": [],
+            "up_cross": []
+        }
+        
+    def visualize_attention(self, attn, layer_name, text_length):
+        """
+        Visualize attention maps for video data with detailed logging
+        attn shape: [B, H, S_image, S_text]
+        """
+        attn = attn.to('cpu').float()
+        avg_attn = attn.mean(dim=1)  # Shape: [B, S_image, S_text]
+        
+        B, N_i, N_t = avg_attn.shape
+
+        H = 30 # self.latent_height // self.patch_size
+        W = 45 # self.latent_width // self.patch_size
+        T = 13 # self.compressed_num_frames
+        
+        # Process each batch item
+        for b in range(B):
+            num_tokens_vis = min(N_t, 4)
+
+            fig, axes = plt.subplots(T, num_tokens_vis, figsize=(4*num_tokens_vis, 4*T))
+        
+            # Handle different subplot configurations
+            if T == 1 and num_tokens_vis == 1:
+                axes = np.array([[axes]])
+            elif T == 1:
+                axes = axes[np.newaxis, :]
+            elif num_tokens_vis == 1:
+                axes = axes[:, np.newaxis]
+
+            batch_attn = avg_attn[b]  # Shape: [S_image, N_t]
+            
+            # Process each frame and token
+            for t in range(T):
+                frame_start = t * H * W
+                frame_end = (t + 1) * H * W
+                
+                for token_idx in range(num_tokens_vis):
+                
+                    frame_attn = batch_attn[frame_start:frame_end, token_idx]
+                
+                    frame_attn = frame_attn.reshape(H, W)
+                    
+                    try:
+                        im = axes[t, token_idx].imshow(frame_attn.numpy(), cmap='viridis')
+                        axes[t, token_idx].set_title(f'Frame {t}, Token {token_idx}')
+                        plt.colorbar(im, ax=axes[t, token_idx])
+                    except Exception as e:
+                        print(f"Error plotting frame {t}, token {token_idx}: {e}")
+                        print(f"Axes shape: {axes.shape}")
+                        raise
+            
+            plt.tight_layout()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = os.path.join(
+                self.save_dir, 
+                f"attn_step{self.step_count}_batch{b}_{layer_name}_{timestamp}.png"
+            )
+            plt.savefig(save_path)
+            plt.close()
+            
+            del batch_attn
+        
+        del avg_attn
+        torch.cuda.empty_cache()
+
+    def store_attention(self, attn, layer_name: str, text_length: int):
+        """
+        Store and visualize attention maps
+        """
+        key = f"{layer_name}_cross"
+        # self.step_store[key].append(attn)
+        
+        with torch.no_grad():
+            try:
+                self.visualize_attention(attn.detach(), layer_name, text_length)
+            except Exception as e:
+                print(f"Visualization failed: {e}")
+                print(f"Attention tensor shape: {attn.shape}")
+            torch.cuda.empty_cache()
+
+    def reset(self):
+        self.step_store = self.get_empty_store()
+        self.attention_store = {}
+        torch.cuda.empty_cache()
 
 class AdaLNMixin(BaseMixin):
     def __init__(
@@ -447,13 +550,14 @@ class AdaLNMixin(BaseMixin):
         qk_ln=True,
         hidden_size_head=None,
         elementwise_affine=True,
+        attention_vis_dir="attention_vis"
     ):
         super().__init__()
         self.num_layers = num_layers
         self.width = width
         self.height = height
         self.compressed_num_frames = compressed_num_frames
-
+        self.attention_store = AttentionStore(save_dir=attention_vis_dir)
         self.adaLN_modulations = nn.ModuleList(
             [nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 12 * hidden_size)) for _ in range(num_layers)]
         )
@@ -562,13 +666,15 @@ class AdaLNMixin(BaseMixin):
         old_impl=attention_fn_default,
         **kwargs,
     ):
+        # Apply LayerNorm if configured
         if self.qk_ln:
             query_layernorm = self.query_layernorm_list[kwargs["layer_id"]]
             key_layernorm = self.key_layernorm_list[kwargs["layer_id"]]
             query_layer = query_layernorm(query_layer)
             key_layer = key_layernorm(key_layer)
 
-        return old_impl(
+        # Get attention output from original implementation
+        context_layer = old_impl(
             query_layer,
             key_layer,
             value_layer,
@@ -578,6 +684,46 @@ class AdaLNMixin(BaseMixin):
             scaling_attention_score=scaling_attention_score,
             **kwargs,
         )
+        # Check if this is cross attention based on encoder_outputs
+        is_cross = 'encoder_outputs' in kwargs and kwargs['encoder_outputs'] is not None
+        if is_cross:
+            text_length = kwargs["text_length"]
+
+            # Extract queries and keys for image and text tokens
+            query_layer_image = query_layer[:, :, text_length:, :]  # [B, H, S_image, D]
+            key_layer_text = key_layer[:, :, :text_length, :]       # [B, H, S_text, D]
+
+            # Check if S_image and S_text are greater than zero
+            S_image = query_layer_image.size(2)
+            S_text = key_layer_text.size(2)
+
+            if S_image == 0 or S_text == 0:
+                # Skip attention computation for this case
+                return context_layer
+
+            # Scale queries if necessary
+            if scaling_attention_score:
+                query_layer_image = query_layer_image / math.sqrt(query_layer_image.shape[-1])
+
+            # Compute attention scores between image queries and text keys
+            attention_scores = torch.matmul(query_layer_image, key_layer_text.transpose(-1, -2))  # [B, H, S_image, S_text]
+
+            # Compute attention probabilities
+            attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
+
+            # Determine layer position for storing attention maps
+            layer_id = kwargs["layer_id"]
+            if layer_id < self.num_layers // 3:
+                pos = "down"
+            elif layer_id < 2 * self.num_layers // 3:
+                pos = "mid"
+            else:
+                pos = "up"
+
+            # Store attention maps with text length
+            self.attention_store.store_attention(attention_probs, pos, text_length)
+
+        return context_layer
 
 
 str_to_dtype = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
