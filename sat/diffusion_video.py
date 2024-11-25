@@ -375,7 +375,7 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
             
-            if self.noise_mode !== 'none':
+            if self.noise_mode != 'none':
                 image, noise_masks = self.add_noised_conditions_to_frames(
                     image, batch['bbox']
                 ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
@@ -573,7 +573,7 @@ class SATVideoDiffusionEngine(nn.Module):
                 image = torch.cat([image, subsequent_frames], dim=2)
 
             # Add noise based on the selected 
-            if self.noise_mode !== 'none':
+            if self.noise_mode != 'none':
                 image, noise_masks = self.add_noised_conditions_to_frames(
                     image, batch['bbox']
                 ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
