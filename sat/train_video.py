@@ -222,6 +222,8 @@ if __name__ == "__main__":
         configs.append(base_config)
     args.log_config = configs
 
+    if args.wandb:
+        wandb.init(project=args.wandb_project_name, name=args.experiment_name)
     training_main(
         args,
         model_cls=SATVideoDiffusionEngine,

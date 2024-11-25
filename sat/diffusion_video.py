@@ -601,6 +601,12 @@ class SATVideoDiffusionEngine(nn.Module):
                 # Draw bounding boxes on the samples
                 samples_with_bbox = self.draw_annotations(samples.clone(), batch, draw_bbox=True, draw_pose=False)
                 log["samples_bbox"] = samples_with_bbox
+
+                log["inputs_samples_comparison"] = torch.cat([log["inputs"], log["samples_raw"]], dim=4)
+
+                log["inputs_samples_bbox_comparison"] = torch.cat([log["inputs"], log["samples_raw"], log["samples_bbox"]], dim=4)
+
+                log["inputs_samples_segm_comparison"] = torch.cat([log["inputs"], log["samples_raw"], log["samples_segm"]], dim=4)
                 
         return log
     
