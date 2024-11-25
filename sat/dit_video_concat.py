@@ -262,6 +262,7 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         hidden_size,
         hidden_size_head,
         text_length,
+        bbox_length,
         theta=10000,
         rot_v=False,
         learnable_pos_embed=False,
@@ -298,7 +299,7 @@ class Rotary3DPositionEmbeddingMixin(BaseMixin):
         self.register_buffer("freqs_sin", freqs_sin)
         self.register_buffer("freqs_cos", freqs_cos)
 
-        self.text_length = text_length + 40
+        self.text_length = text_length + bbox_length
         if learnable_pos_embed:
             num_patches = height * width * compressed_num_frames + text_length
             self.pos_embedding = nn.Parameter(torch.zeros(1, num_patches, int(hidden_size)), requires_grad=True)
@@ -550,7 +551,8 @@ class AdaLNMixin(BaseMixin):
         qk_ln=True,
         hidden_size_head=None,
         elementwise_affine=True,
-        attention_vis_dir="attention_vis"
+        attention_vis_dir="attention_vis",
+        bbox_length=40,
     ):
         super().__init__()
         self.num_layers = num_layers
@@ -560,6 +562,12 @@ class AdaLNMixin(BaseMixin):
         self.attention_store = AttentionStore(save_dir=attention_vis_dir)
         self.adaLN_modulations = nn.ModuleList(
             [nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 12 * hidden_size)) for _ in range(num_layers)]
+        )
+        self.bbox_length = bbox_length
+
+        # init bbox modulations to reuse the same weights
+        self.bbox_modulations = nn.ModuleList(
+            [nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 6 * hidden_size)) for _ in range(num_layers)]
         )
 
         self.qk_ln = qk_ln
@@ -585,8 +593,8 @@ class AdaLNMixin(BaseMixin):
         **kwargs,
     ):
         text_length = kwargs["text_length"]
-        bbox_length = kwargs.get("bbox_length", 40)  # Total length of bbox tokens
-        
+        bbox_length = self.bbox_length
+
         # Split hidden states into text, bbox, and image tokens
         text_hidden_states = hidden_states[:, :text_length]  # (b,n_t,d)
         bbox_hidden_states = hidden_states[:, text_length:text_length + bbox_length]  # (b,n_b,d)
@@ -594,6 +602,7 @@ class AdaLNMixin(BaseMixin):
 
         layer = self.transformer.layers[kwargs["layer_id"]]
         adaLN_modulation = self.adaLN_modulations[kwargs["layer_id"]]
+        bbox_modulation = self.bbox_modulations[kwargs["layer_id"]]
 
         (
             shift_msa,
@@ -616,6 +625,16 @@ class AdaLNMixin(BaseMixin):
             text_gate_mlp.unsqueeze(1),
         )
 
+        (
+            bbox_shift_msa,
+            bbox_scale_msa,
+            bbox_gate_msa,
+            bbox_shift_mlp,
+            bbox_scale_mlp,
+            bbox_gate_mlp,
+        ) = bbox_modulation(kwargs["emb"]).chunk(6, dim=1)
+        bbox_gate_msa, bbox_gate_mlp = bbox_gate_msa.unsqueeze(1), bbox_gate_mlp.unsqueeze(1)
+
         # Apply layernorm and modulation to each part
         img_attention_input = layer.input_layernorm(img_hidden_states)
         text_attention_input = layer.input_layernorm(text_hidden_states)
@@ -623,7 +642,7 @@ class AdaLNMixin(BaseMixin):
         
         img_attention_input = modulate(img_attention_input, shift_msa, scale_msa)
         text_attention_input = modulate(text_attention_input, text_shift_msa, text_scale_msa)
-        bbox_attention_input = modulate(bbox_attention_input, shift_msa, scale_msa)
+        bbox_attention_input = modulate(bbox_attention_input, bbox_shift_msa, bbox_scale_msa)
 
         # Concatenate all parts
         attention_input = torch.cat(
@@ -646,7 +665,7 @@ class AdaLNMixin(BaseMixin):
             
         img_hidden_states = img_hidden_states + gate_msa * img_attention_output
         text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output
-        bbox_hidden_states = bbox_hidden_states + gate_msa * bbox_attention_output
+        bbox_hidden_states = bbox_hidden_states + bbox_gate_msa * bbox_attention_output
 
         # MLP forward pass
         img_mlp_input = layer.post_attention_layernorm(img_hidden_states)
@@ -655,7 +674,7 @@ class AdaLNMixin(BaseMixin):
         
         img_mlp_input = modulate(img_mlp_input, shift_mlp, scale_mlp)
         text_mlp_input = modulate(text_mlp_input, text_shift_mlp, text_scale_mlp)
-        bbox_mlp_input = modulate(bbox_mlp_input, shift_mlp, scale_mlp)
+        bbox_mlp_input = modulate(bbox_mlp_input, bbox_shift_mlp, bbox_scale_mlp)
 
         mlp_input = torch.cat((text_mlp_input, bbox_mlp_input, img_mlp_input), dim=1)
         mlp_output = layer.mlp(mlp_input, **kwargs)
@@ -671,7 +690,7 @@ class AdaLNMixin(BaseMixin):
 
         img_hidden_states = img_hidden_states + gate_mlp * img_mlp_output
         text_hidden_states = text_hidden_states + text_gate_mlp * text_mlp_output
-        bbox_hidden_states = bbox_hidden_states + gate_mlp * bbox_mlp_output
+        bbox_hidden_states = bbox_hidden_states + bbox_gate_mlp * bbox_mlp_output
 
         hidden_states = torch.cat(
             (text_hidden_states, bbox_hidden_states, img_hidden_states), 
@@ -721,7 +740,7 @@ class AdaLNMixin(BaseMixin):
         is_cross = False
         if is_cross:
             text_length = kwargs["text_length"]
-            bbox_length = kwargs.get("bbox_length", 40)
+            bbox_length = self.bbox_length
             players_per_frame = kwargs.get("players_per_frame", 10)  # Default 10 players
             num_frames = kwargs.get("num_frames", 49)  # Default 49 frames
 

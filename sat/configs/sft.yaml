@@ -1,7 +1,7 @@
 args:
     checkpoint_activations: True # using gradient checkpointing
     model_parallel_size: 1
-    experiment_name: 5b-lora-i2v-bbox-tokens
+    experiment_name: 5b-lora-i2v-bbox-1-tokens
     mode: finetune
     load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
     no_load_rng: True

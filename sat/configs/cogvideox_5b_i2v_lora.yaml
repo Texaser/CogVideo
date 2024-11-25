@@ -7,7 +7,7 @@ model:
     noise_last_frame: false
     not_trainable_prefixes: ["all"] ## Using Lora
     pixel_space_loss: false
-    noise_mode: "bbox" # bbox, segm
+    noise_mode: "none" # bbox, segm, none
 
     log_keys:
         - txt
@@ -60,6 +60,7 @@ model:
                         learnable_pos_embed: True
                         hidden_size_head: 64
                         text_length: 226
+                        bbox_length: 4
 
                 lora_config:
                     target: sat.model.finetune.lora2.LoraMixin
@@ -75,7 +76,7 @@ model:
                     target: dit_video_concat.AdaLNMixin
                     params:
                         qk_ln: True
-
+                        bbox_length: 4
                 final_layer_config:
                     target: dit_video_concat.FinalLayerMixin
 
@@ -93,11 +94,11 @@ model:
                   input_key: bbox
                   target: sgm.modules.encoders.modules.BboxTokenEmbedder
                   params:
-                      max_length: 40
+                      max_length: 4
                       hidden_dim: 512
                       max_distance: 2
                       token_dim: 4096
-                      tokens_per_trajectory: 4
+                      tokens_per_trajectory: 1
                       num_attn_heads: 8
 
     first_stage_config:

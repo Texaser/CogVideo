@@ -375,9 +375,10 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
             
-            image, noise_masks = self.add_noised_conditions_to_frames(
-                image, batch['bbox']
-            ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
+            if self.noise_mode !== 'none':
+                image, noise_masks = self.add_noised_conditions_to_frames(
+                    image, batch['bbox']
+                ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
         
 
             image = self.encode_first_stage(image, batch)
@@ -571,10 +572,11 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
 
-            # Add noise based on the selected noise_mode
-            image, noise_masks = self.add_noised_conditions_to_frames(
-                image, batch['bbox']
-            ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
+            # Add noise based on the selected 
+            if self.noise_mode !== 'none':
+                image, noise_masks = self.add_noised_conditions_to_frames(
+                    image, batch['bbox']
+                ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
             
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
