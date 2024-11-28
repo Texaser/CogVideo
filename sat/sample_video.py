@@ -167,7 +167,7 @@ def add_color_conditions_to_frames(image, segm_tensor):
                 # Add colored mask to frame
                 for c in range(C):
                     colored_frame[c] += mask * color[c]
-                colored_frame = add_noise_to_rgb(colored_frame, mask_rgb)
+                #colored_frame = add_noise_to_rgb(colored_frame, mask_rgb)
             # Scale colors to [-1, 1] range and assign πto image
             image[b, :, t] = colored_frame
 
@@ -176,7 +176,7 @@ def add_color_conditions_to_frames(image, segm_tensor):
 def save_frames(frames, save_dir, frame_prefix):
     os.makedirs(save_dir, exist_ok=True)
     frames = rearrange(frames, 'B C H W -> B H W C')  # [B, H, W, C]
-    frames = (255.0 * frames).numpy().astype(np.uint8)
+    frames = (255.0 * frames).cpu().numpy().astype(np.uint8)
     for i, frame in enumerate(frames):
         Image.fromarray(frame).save(os.path.join(save_dir, f"{frame_prefix}_{i:06d}.png"))
 
@@ -250,7 +250,7 @@ def sampling_main(args, model_cls):
 
             if mpu.get_model_parallel_rank() == 0:
                 os.makedirs(save_path, exist_ok=True)
-
+    
                 # Save original video frames
                 original_video = video_frames.to(torch.float32)
                 original_video = original_video.permute(0, 2, 1, 3, 4).contiguous()  # [B, T, C, H, W]
@@ -293,6 +293,8 @@ def sampling_main(args, model_cls):
                 # Extract the first and last frames
                 first_frame = add_noise_to_frame(video_frames[:, :, 0, :, :])
                 last_frame = add_noise_to_frame(video_frames[:, :, -1, :, :])
+                # first_frame = video_frames[:, :, 0, :, :]
+                # last_frame = video_frames[:, :, -1, :, :]
 
                 # Calculate the number of padding frames
                 num_padding_frames = num_frames - 2
@@ -310,7 +312,7 @@ def sampling_main(args, model_cls):
                 image, noise = add_color_conditions_to_frames(image, batch["mask"].to('cuda'))
                 # Encode the image using the model's first stage
                 image = model.encode_first_stage(image, None)
-                image = image / model.scale_factor
+                #image = image * model.scale_factor
                 image = image.permute(0, 2, 1, 3, 4).contiguous()  # [B, T, C, H, W]
 
                 # Prepare the shape for sampling
@@ -324,6 +326,7 @@ def sampling_main(args, model_cls):
                     uc=uc,
                     batch_size=1,
                     shape=(T, C, H, W),
+                    ofs=torch.tensor([2.0]).to("cuda")
                 )
             else:
                 # Existing code for the non-image2video case
@@ -341,6 +344,7 @@ def sampling_main(args, model_cls):
 
             # Continue with decoding and saving the samples
             samples_z = samples_z.permute(0, 2, 1, 3, 4).contiguous()
+
             if args.only_save_latents:
                 samples_z = 1.0 / model.scale_factor * samples_z
                 save_path = os.path.join(

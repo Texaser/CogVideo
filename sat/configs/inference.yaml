@@ -14,5 +14,5 @@ args:
     noise_last_frame: True
     #  fp16: True # For CogVideoX-2B
     bf16: True # For CogVideoX-5B and CoGVideoX-5B-I2V
-    output_dir: results/ckpts_5b/5b-i2v-segm-fps-30-11-05-11-51
+    output_dir: results2/ckpts_5b/5b-i2v-segm-fps-30-11-05-11-51
     force_inference: True
