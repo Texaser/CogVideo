@@ -10,7 +10,8 @@ import torch
 import numpy as np
 from einops import rearrange
 import torchvision.transforms as TT
-
+from PIL import Image
+import matplotlib.pyplot as plt
 
 from sat.model.base_model import get_model
 from sat.training.model_io import load_checkpoint
@@ -20,8 +21,10 @@ from diffusion_video import SATVideoDiffusionEngine
 from arguments import get_args
 from torchvision.transforms.functional import center_crop, resize
 from torchvision.transforms import InterpolationMode
-from PIL import Image
 
+# Import SFTDataset from data_video.py
+from data_video import SFTDataset
+from torch.utils.data import DataLoader
 
 def read_from_cli():
     cnt = 0
@@ -113,13 +116,13 @@ def resize_for_rectangle_crop(arr, image_size, reshape_mode="random"):
     arr = TT.functional.crop(arr, top=top, left=left, height=image_size[0], width=image_size[1])
     return arr
 
+
 def add_noise_to_frame(image):
     sigma = torch.normal(mean=-3.0, std=0.5, size=(image.shape[0],)).to(image.device)
     sigma = torch.exp(sigma).to(image.dtype)
-    image_noise = torch.randn_like(image) * sigma[:, None, None, None, None]
+    image_noise = torch.randn_like(image) * sigma[:, None, None, None]
     image = image + image_noise
     return image
-
 def add_noise_to_rgb(image, mask):
     """
     Adds noise only to the masked regions of the image.
@@ -132,43 +135,7 @@ def add_noise_to_rgb(image, mask):
     noise = torch.randn_like(image) * sigma[:, None, None]
     image_noise = noise * mask
     image = image + image_noise
-    return image    
-
-def add_noised_conditions_to_frames(image, segm_tensor, noise_mode='segm'):
-    """
-    Injects Gaussian noise into each frame of the image based on the segmentation masks,
-    excluding the first frame which retains the reference image with added noise.
-    """
-    B, C, T, H, W = image.shape
-    _, _, num_objects, _, _ = segm_tensor.shape  # [B, T, 10, H, W]
-
-    # Initialize a tensor to store noise masks
-    noise_masks = torch.zeros_like(image)
-
-    # Only add Gaussian noise to frames after the first
-    for b in range(B):
-        for t in range(1, T-1):
-            # Process segmentation masks for each object
-            for obj_idx in range(num_objects):
-                # Get segmentation mask for current object
-                mask = segm_tensor[b, t, obj_idx]  # [H, W]
-
-                # Skip if mask is empty
-                if not torch.any(mask):
-                    continue
-
-                # Generate noise for masked region
-                noise = torch.randn(C, H, W, device=image.device, dtype=image.dtype)
-                scaled_noise = noise * mask.unsqueeze(0)  # Scale noise by mask
-
-                # Add noise to the image in place
-                image[b, :, t] += scaled_noise
-                
-                # Store the noise mask
-                noise_masks[b, :, t] += scaled_noise
-
-    return image, noise_masks
-
+    return image 
 def add_color_conditions_to_frames(image, segm_tensor):
     """
     Instead of adding noise, encodes each player with a distinct color from the tab10 colormap.
@@ -206,304 +173,189 @@ def add_color_conditions_to_frames(image, segm_tensor):
 
     return image, None
 
-def add_original_color_conditions_to_frames(image, segm_tensor, original_frames):
-    """
-    Encodes each player with the corresponding RGB values from the original frames 
-    based on the segmentation mask, with noise applied only in masked regions.
-    """
-    B, C, T, H, W = image.shape
-    _, _, num_objects, _, _ = segm_tensor.shape  # [B, T, num_objects, H, W]
+def save_frames(frames, save_dir, frame_prefix):
+    os.makedirs(save_dir, exist_ok=True)
+    frames = rearrange(frames, 'B C H W -> B H W C')  # [B, H, W, C]
+    frames = (255.0 * frames).numpy().astype(np.uint8)
+    for i, frame in enumerate(frames):
+        Image.fromarray(frame).save(os.path.join(save_dir, f"{frame_prefix}_{i:06d}.png"))
 
-    # Only modify frames after the first one (keep first frame as reference)
+def save_segmentation_masks(segmentation_masks, save_dir):
+    os.makedirs(save_dir, exist_ok=True)
+    cmap = plt.get_cmap("tab10")
+
+    B, T, num_objects, H, W = segmentation_masks.shape
+
     for b in range(B):
-        for t in range(1, T-1):
-            # Start with a black frame
-            colored_frame = torch.zeros((C, H, W), device=image.device, dtype=image.dtype)
-            
-            # Add each player's RGB values from the original frame
+        for t in range(T):
+            colored_mask = torch.zeros((3, H, W), dtype=torch.float32)
             for obj_idx in range(num_objects):
-                mask = segm_tensor[b, t, obj_idx]  # [H, W]
-                
+                mask = segmentation_masks[b, t, obj_idx]  # [H, W]
                 if not torch.any(mask):
                     continue
-                
-                mask_rgb = mask[None, :, :]  # Shape [1, H, W] for broadcasting over channels
-                
-                # Apply the mask to get RGB values from the original frame
-                for c in range(C):
-                    colored_frame[c] += mask * original_frames[b, c, t, :, :]
-                
-                # Apply noise only to masked regions using the add_noise_to_rgb method
-                colored_frame = add_noise_to_rgb(colored_frame, mask_rgb)
-                
-            # Assign the colored frame with original RGB values (with noise) to the image tensor
-            image[b, :, t] = colored_frame
-
-    return image, None
-
-def load_and_process_masks(mask_paths, indices, num_frames, video_size, original_size):
-    """
-    Load and process segmentation masks for selected frames for all players
-    mask_paths: list of paths to mask files for each player
-    Handles sparse CSR matrix format for masks
-    """
-    # Initialize tensor to store masks for all objects
-    processed_masks = torch.zeros(
-        (num_frames, 10, video_size[0], video_size[1]), 
-        dtype=torch.float16
-    )
-    
-    # Calculate scaling and cropping parameters
-    if original_size[1] / original_size[0] > video_size[1] / video_size[0]:
-        scale = video_size[0] / original_size[0]
-        new_height = video_size[0]
-        new_width = int(original_size[1] * scale)
-    else:
-        scale = video_size[1] / original_size[1]
-        new_width = video_size[1]
-        new_height = int(original_size[0] * scale)
-
-    delta_h = new_height - video_size[0]
-    delta_w = new_width - video_size[1]
-    top = delta_h // 2
-    left = delta_w // 2
-
-    # Load and process masks for each player
-    for player_idx, mask_path in enumerate(mask_paths):
-        masks_dict = np.load(mask_path, allow_pickle=True).item()
-        
-        for i, idx in enumerate(indices[:num_frames]):
-            frame_key = f'frame_{idx}'
-            if frame_key in masks_dict:
-                # Convert sparse matrix to dense numpy array
-                sparse_mask = masks_dict[frame_key]
-                mask = torch.from_numpy(sparse_mask.toarray()).float()
-                
-                # Resize and crop mask
-                processed_mask = resize_and_crop_mask(
-                    mask,
-                    original_size,
-                    video_size,
-                    scale,
-                    top,
-                    left
-                )
-                
-                processed_masks[i, player_idx] = processed_mask
-
-    return processed_masks
-
-def resize_and_crop_mask(mask, original_size, target_size, scale, top, left):
-        """
-        Resize and crop a single mask to match the video frame processing
-        mask: tensor of shape (H, W)
-        """
-        # Resize mask to match the scaled size before cropping
-        if original_size[1] / original_size[0] > target_size[1] / target_size[0]:
-            scale = target_size[0] / original_size[0]
-            new_height = target_size[0]
-            new_width = int(original_size[1] * scale)
-        else:
-            scale = target_size[1] / original_size[1]
-            new_width = target_size[1]
-            new_height = int(original_size[0] * scale)
-
-        # Resize mask using nearest neighbor interpolation
-        resized_mask = TT.functional.resize(
-            mask.unsqueeze(0).unsqueeze(0),
-            size=[new_height, new_width],
-            interpolation=InterpolationMode.NEAREST
-        ).squeeze()
-
-        # Crop the mask
-        cropped_mask = TT.functional.crop(
-            resized_mask.unsqueeze(0),
-            top=top,
-            left=left,
-            height=target_size[0],
-            width=target_size[1]
-        ).squeeze()
-
-        return cropped_mask
-
+                color = torch.tensor(cmap(obj_idx)[:3], dtype=torch.float32)
+                colored_mask += mask.unsqueeze(0) * color.view(3, 1, 1)
+            # Clamp values
+            colored_mask = torch.clamp(colored_mask, 0.0, 1.0)
+            # Convert to numpy
+            frame = (255.0 * colored_mask.permute(1, 2, 0)).numpy().astype(np.uint8)
+            Image.fromarray(frame).save(os.path.join(save_dir, f"mask_{b:06d}_{t:06d}.png"))
 
 def sampling_main(args, model_cls):
     if isinstance(model_cls, type):
         model = get_model(args, model_cls)
     else:
         model = model_cls
-    # load_checkpoint(model, args, specific_iteration=5000)
     load_checkpoint(model, args)
     model.eval()
 
-    if args.input_type == "cli":
-        data_iter = read_from_cli()
-    elif args.input_type == "txt":
-        rank, world_size = mpu.get_data_parallel_rank(), mpu.get_data_parallel_world_size()
-        print("rank and world_size", rank, world_size)
-        data_iter = read_from_file(args.input_file, rank=rank, world_size=world_size)
-    else:
-        raise NotImplementedError
+    # Move model to device and convert to bfloat16
+    device = model.device
+    model = model.to(device).to(torch.bfloat16)
 
     image_size = [480, 720]
     num_frames = 49
-    if args.image2video:
-        chained_trainsforms = []
-        chained_trainsforms.append(TT.ToTensor())
-        transform = TT.Compose(chained_trainsforms)
+    # Create the test dataset and DataLoader
+    test_dataset = SFTDataset(
+        data_dir=args.test_data_dir,
+        video_size=[480, 720],
+        fps=args.sampling_fps,
+        max_num_frames=num_frames,
+        skip_frms_num=0,
+    )
+
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=4,
+    )
 
     sample_func = model.sample
-    T, H, W, C, F = args.sampling_num_frames, image_size[0], image_size[1], args.latent_channels, 8
+    T, H, W, C, F = args.sampling_num_frames, image_size[0], image_size[1], args.latent_channels, args.sampling_fps
     num_samples = [1]
     force_uc_zero_embeddings = ["txt"]
-    device = model.device
+
     with torch.no_grad():
-        for text, cnt in tqdm(data_iter):
-            if args.image2video:
-                text, image_path = text.split("@@")
-                assert os.path.exists(image_path), image_path
-                folder_path = os.path.dirname(image_path)
-                first_image = Image.open(image_path).convert("RGB")
-                first_image = transform(first_image).unsqueeze(0).to("cuda")
-                first_image = resize_for_rectangle_crop(first_image, image_size, reshape_mode="center").unsqueeze(0)
-                first_image = first_image * 2.0 - 1.0
-                first_image = first_image.unsqueeze(2).to(torch.bfloat16)
-                original_frames = torch.load(os.path.join(folder_path, "frames.pth"))
-                # import pudb; pudb.set_trace();
-                if args.noised_image_input:                   
-                    image = add_noise_to_frame(first_image)
-                    if args.noise_last_frame:
-                        last_image_path = image_path.replace('_first', '_last')
-                        last_image = Image.open(last_image_path).convert("RGB")
-                        last_image = transform(last_image).unsqueeze(0).to("cuda")
-                        last_image = resize_for_rectangle_crop(last_image, image_size, reshape_mode="center").unsqueeze(0)
-                        last_image = last_image * 2.0 - 1.0
-                        last_image = last_image.unsqueeze(2).to(torch.bfloat16)
-                        last_frame = add_noise_to_frame(last_image)
-                        subsequent_frames = torch.zeros(
-                            (image.shape[0], image.shape[1], num_frames - 2, image.shape[3], image.shape[4]),
-                            device=image.device,
-                            dtype=image.dtype
-                        )
-                        image = torch.cat([image, subsequent_frames, last_frame], dim=2)
-                    else:
-                        subsequent_frames = torch.zeros(
-                            (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
-                            device=image.device,
-                            dtype=image.dtype
-                        )
-                        image = torch.cat([image, subsequent_frames], dim=2)
-                    # Add noise based on the selected noise_mode
-                    
-                    # Check if all player masks exist
-                    player_mask_paths = []
-                    all_masks_exist = True
-                    for player_idx in range(10):
-                        mask_path = f"{folder_path}/masks/object_{player_idx}_masks.npy"
-                        if os.path.exists(mask_path):
-                            player_mask_paths.append(mask_path)
-                        else:
-                            print(f"Warning: Mask not found for video {folder_path}, player {player_idx}")
-                            all_masks_exist = False
-                            break
+        for batch_idx, batch in tqdm(enumerate(test_dataloader), total=len(test_dataloader)):
+            video_frames = batch["mp4"].to(device)  # [B, T, C, H, W]
+            video_frames = video_frames.permute(0, 2, 1, 3, 4).contiguous()  # [B, C, T, H, W]
+            video_frames = video_frames.to(torch.bfloat16)
+            text_prompts = batch["txt"]
 
+            # Prepare save_path
+            save_path = os.path.join(
+                args.output_dir, f"{batch_idx}_{text_prompts[0].replace(' ', '_').replace('/', '')[:120]}"
+            )
 
-                    masks = load_and_process_masks(
-                        player_mask_paths, 
-                        image, 
-                        num_frames,
-                        (480, 720),
-                        (720, 1280)
-                    )
-                    masks = masks.unsqueeze(0)
-                    image, noise_masks = add_original_color_conditions_to_frames(image, masks, original_frames)
-                # import pudb; pudb.set_trace();
-                # image = Image.open(image_path).convert("RGB")
-                # image = transform(image).unsqueeze(0).to("cuda")
-                # image = resize_for_rectangle_crop(image, image_size, reshape_mode="center").unsqueeze(0)
-                # image = image * 2.0 - 1.0
-                # image = image.unsqueeze(2).to(torch.bfloat16)
-                image = model.encode_first_stage(image, None)
-                image = image.permute(0, 2, 1, 3, 4).contiguous()
-                # pad_shape = (image.shape[0], T - 1, C, H // F, W // F)
-                # image = torch.concat([image, torch.zeros(pad_shape).to(image.device).to(image.dtype)], dim=1)
-            else:
-                image = None
+            if mpu.get_model_parallel_rank() == 0:
+                os.makedirs(save_path, exist_ok=True)
+
+                # Save original video frames
+                original_video = video_frames.to(torch.float32)
+                original_video = original_video.permute(0, 2, 1, 3, 4).contiguous()  # [B, T, C, H, W]
+                original_video = torch.clamp((original_video + 1.0) / 2.0, min=0.0, max=1.0).cpu()
+                save_video_as_grid_and_mp4(original_video, os.path.join(save_path, 'original_video'), fps=args.sampling_fps)
+
+                # Save first and last frames
+                save_frames(original_video[:, 0], os.path.join(save_path, 'first_frames'), 'first_frame')
+                save_frames(original_video[:, -1], os.path.join(save_path, 'last_frames'), 'last_frame')
+
+                # Save segmentation masks
+                segmentation_masks = batch["mask"].cpu()  # [B, T, num_objects, H, W]
+                save_segmentation_masks(segmentation_masks, os.path.join(save_path, 'segmentation_masks'))
 
             value_dict = {
-                "prompt": text,
+                "prompt": text_prompts[0],
                 "negative_prompt": "",
                 "num_frames": torch.tensor(T).unsqueeze(0),
             }
 
-            batch, batch_uc = get_batch(
-                get_unique_embedder_keys_from_conditioner(model.conditioner), value_dict, num_samples
+            batch_cond, batch_uc = get_batch(
+                get_unique_embedder_keys_from_conditioner(model.conditioner),
+                value_dict,
+                num_samples,
             )
-            for key in batch:
-                if isinstance(batch[key], torch.Tensor):
-                    print(key, batch[key].shape)
-                elif isinstance(batch[key], list):
-                    print(key, [len(l) for l in batch[key]])
-                else:
-                    print(key, batch[key])
+
+            # Convert conditioning tensors to bfloat16
             c, uc = model.conditioner.get_unconditional_conditioning(
-                batch,
+                batch_cond,
                 batch_uc=batch_uc,
                 force_uc_zero_embeddings=force_uc_zero_embeddings,
             )
 
             for k in c:
-                if not k == "crossattn":
-                    c[k], uc[k] = map(lambda y: y[k][: math.prod(num_samples)].to("cuda"), (c, uc))
+                if k != "crossattn":
+                    c[k] = c[k][: math.prod(num_samples)].to(device).to(torch.bfloat16)
+                    uc[k] = uc[k][: math.prod(num_samples)].to(device).to(torch.bfloat16)
 
-            if args.image2video and image is not None:
+            if args.image2video:
+                # Extract the first and last frames
+                first_frame = add_noise_to_frame(video_frames[:, :, 0, :, :])
+                last_frame = add_noise_to_frame(video_frames[:, :, -1, :, :])
+
+                # Calculate the number of padding frames
+                num_padding_frames = num_frames - 2
+                zeros_padding = torch.zeros(
+                    (first_frame.shape[0], first_frame.shape[1], num_padding_frames, first_frame.shape[2], first_frame.shape[3]),
+                    device=device,
+                    dtype=video_frames.dtype,
+                )
+
+                # Concatenate frames and padding along the time dimension
+                image = torch.cat(
+                    [first_frame.unsqueeze(2), zeros_padding, last_frame.unsqueeze(2)], dim=2
+                )  # [B, C, T, H, W]
+                
+                image, noise = add_color_conditions_to_frames(image, batch["mask"].to('cuda'))
+                # Encode the image using the model's first stage
+                image = model.encode_first_stage(image, None)
+                image = image / model.scale_factor
+                image = image.permute(0, 2, 1, 3, 4).contiguous()  # [B, T, C, H, W]
+
+                # Prepare the shape for sampling
+                H, W = image.shape[-2], image.shape[-1]  # Update H and W based on the encoded image
+
                 c["concat"] = image
                 uc["concat"] = image
+                # Sample using the model, providing the encoded image as the initial latent
+                samples_z = sample_func(
+                    c,
+                    uc=uc,
+                    batch_size=1,
+                    shape=(T, C, H, W),
+                )
+            else:
+                # Existing code for the non-image2video case
+                image_size = args.sampling_image_size
+                H, W = image_size[0], image_size[1]
+                F = 8  # 8x downsampled
+                image = None
 
-            for index in range(args.batch_size):
-                # reload model on GPU
-                model.to(device)
                 samples_z = sample_func(
                     c,
                     uc=uc,
                     batch_size=1,
                     shape=(T, C, H // F, W // F),
-                )
-                samples_z = samples_z.permute(0, 2, 1, 3, 4).contiguous()
+                ).to("cuda")
 
-                # Unload the model from GPU to save GPU memory
-                model.to("cpu")
-                torch.cuda.empty_cache()
-                first_stage_model = model.first_stage_model
-                first_stage_model = first_stage_model.to(device)
-
-                latent = 1.0 / model.scale_factor * samples_z
-
-                # Decode latent serial to save GPU memory
-                recons = []
-                loop_num = (T - 1) // 2
-                for i in range(loop_num):
-                    if i == 0:
-                        start_frame, end_frame = 0, 3
-                    else:
-                        start_frame, end_frame = i * 2 + 1, i * 2 + 3
-                    if i == loop_num - 1:
-                        clear_fake_cp_cache = True
-                    else:
-                        clear_fake_cp_cache = False
-                    with torch.no_grad():
-                        recon = first_stage_model.decode(
-                            latent[:, :, start_frame:end_frame].contiguous(), clear_fake_cp_cache=clear_fake_cp_cache
-                        )
-
-                    recons.append(recon)
-
-                recon = torch.cat(recons, dim=2).to(torch.float32)
-                samples_x = recon.permute(0, 2, 1, 3, 4).contiguous()
-                samples = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0).cpu()
-
+            # Continue with decoding and saving the samples
+            samples_z = samples_z.permute(0, 2, 1, 3, 4).contiguous()
+            if args.only_save_latents:
+                samples_z = 1.0 / model.scale_factor * samples_z
                 save_path = os.path.join(
-                    args.output_dir, str(cnt) + "_" + text.replace(" ", "_").replace("/", "")[:120], str(index)
+                    args.output_dir, f"{batch_idx}_{text_prompts[0].replace(' ', '_').replace('/', '')[:120]}"
+                )
+                os.makedirs(save_path, exist_ok=True)
+                torch.save(samples_z, os.path.join(save_path, "latent.pt"))
+                with open(os.path.join(save_path, "text.txt"), "w") as f:
+                    f.write(text_prompts[0])
+            else:
+                samples_x = model.decode_first_stage(samples_z).to(torch.float32)
+                samples_x = samples_x.permute(0, 2, 1, 3, 4).contiguous()
+                samples = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0).cpu()
+                save_path = os.path.join(
+                    args.output_dir, f"{batch_idx}_{text_prompts[0].replace(' ', '_').replace('/', '')[:120]}"
                 )
                 if mpu.get_model_parallel_rank() == 0:
                     save_video_as_grid_and_mp4(samples, save_path, fps=args.sampling_fps)
@@ -524,5 +376,8 @@ if __name__ == "__main__":
     args.model_config.network_config.params.transformer_args.model_parallel_size = 1
     args.model_config.network_config.params.transformer_args.checkpoint_activations = False
     args.model_config.loss_fn_config.params.sigma_sampler_config.params.uniform_sampling = False
+
+    if not hasattr(args, 'test_data_dir'):
+        args.test_data_dir = '/mnt/mir/fan23j/data/hq-poses-strict'
 
     sampling_main(args, model_cls=SATVideoDiffusionEngine)
