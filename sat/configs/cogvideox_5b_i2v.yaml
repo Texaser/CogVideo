@@ -30,8 +30,8 @@ model:
         params:
             num_layers: 8
             num_attention_heads: 48
-            downscale_coef: 1
             in_channels: 16
+
     network_config:
         target: dit_video_concat.DiffusionTransformer
         params:

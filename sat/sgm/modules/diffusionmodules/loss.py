@@ -70,7 +70,7 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
         self.min_snr_value = min_snr_value
         super().__init__(**kwargs)
 
-    def __call__(self, network, denoiser, conditioner, input, batch):
+    def __call__(self, network, denoiser, conditioner, input, batch, control_net=None):
         cond = conditioner(batch)
         additional_model_inputs = {key: batch[key] for key in self.batch2model_keys.intersection(batch)}
     
@@ -101,9 +101,10 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
     
         if "concat_images" in batch.keys():
             cond["concat"] = batch["concat_images"]
+            cond["concat_images_with_cond"] = batch["concat_images_with_cond"]
     
         # Model output
-        model_output = denoiser(network, noised_input, alphas_cumprod_sqrt, cond, **additional_model_inputs)
+        model_output = denoiser(network, noised_input, alphas_cumprod_sqrt, cond, control_net=control_net, **additional_model_inputs)
         w = append_dims(1 / (1 - alphas_cumprod_sqrt**2), input.ndim)  # v-pred
     
         # Compute the diffusion loss

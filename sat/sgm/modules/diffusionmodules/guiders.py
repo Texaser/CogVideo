@@ -45,8 +45,14 @@ class VanillaCFG:
         c_out = dict()
 
         for k in c:
-            if k in ["vector", "crossattn", "concat"]:
+            if k in ["vector", "crossattn", "concat", "concat_images_with_cond"]:
                 c_out[k] = torch.cat((uc[k], c[k]), 0)
+            elif k == "controlnet_states":
+                # Handle controlnet_states separately
+                # Assuming controlnet_states is a tuple or list of tensors
+                c_out[k] = tuple(
+                    torch.cat([uc_state, c_state], dim=0) for uc_state, c_state in zip(uc[k], c[k])
+                )
             else:
                 assert c[k] == uc[k]
                 c_out[k] = c[k]

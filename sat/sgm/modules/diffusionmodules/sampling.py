@@ -636,14 +636,14 @@ class VPSDEDPMPP2MSampler(VideoDDIMSampler):
 
         return x, denoised
 
-    def __call__(self, denoiser, x, cond, uc=None, num_steps=None, scale=None, scale_emb=None, control_net=None):
+    def __call__(self, denoiser, x, cond, uc=None, num_steps=None, scale=None, scale_emb=None):
         x, s_in, alpha_cumprod_sqrt, num_sigmas, cond, uc, timesteps = self.prepare_sampling_loop(
             x, cond, uc, num_steps
         )
 
         if self.fixed_frames > 0:
             prefix_frames = x[:, : self.fixed_frames]
-        import pudb; pudb.set_trace()
+
         old_denoised = None
         for i in self.get_sigma_gen(num_sigmas):
             # Handle fixed frames if needed
@@ -657,22 +657,6 @@ class VPSDEDPMPP2MSampler(VideoDDIMSampler):
                 else:
                     x = torch.cat([prefix_frames, x[:, self.fixed_frames :]], dim=1)
 
-            # Extract controlnet states at current timestep if control_net is available
-            controlnet_states = None
-            if control_net is not None:
-                controlnet_states = control_net(
-                    hidden_states=x,
-                    encoder_hidden_states=cond.get("crossattn", None),
-                    controlnet_states=cond.get("concat", None),
-                    timestep=timesteps[-(i + 1)],
-                    return_dict=True
-                ).sample
-
-            # Modify cond to include controlnet states
-            step_cond = dict(cond)
-            if controlnet_states is not None:
-                step_cond["controlnet_states"] = controlnet_states
-
             x, old_denoised = self.sampler_step(
                 old_denoised,
                 None if i == 0 else s_in * alpha_cumprod_sqrt[i - 1],
@@ -680,8 +664,8 @@ class VPSDEDPMPP2MSampler(VideoDDIMSampler):
                 s_in * alpha_cumprod_sqrt[i + 1],
                 denoiser,
                 x,
-                step_cond,  # Use modified cond with controlnet states
-                uc=uc,
+                cond,
+                uc,
                 idx=self.num_steps - i,
                 timestep=timesteps[-(i + 1)],
                 scale=scale,

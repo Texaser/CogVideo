@@ -32,6 +32,7 @@ class OpenAIWrapper(IdentityWrapper):
         else:
             raise ValueError("Input tensor must be 4D or 5D")
 
+        kwargs["concat_images_with_cond"] = c["concat_images_with_cond"]
         return self.diffusion_model(
             x,
             timesteps=t,

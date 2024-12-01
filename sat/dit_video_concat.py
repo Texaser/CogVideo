@@ -484,6 +484,7 @@ class AdaLNMixin(BaseMixin):
         # hidden_states (b,(n_t+t*n_i),d)
         text_hidden_states = hidden_states[:, :text_length]  # (b,n,d)
         img_hidden_states = hidden_states[:, text_length:]  # (b,(t n),d)
+        controlnet_states = kwargs.get("controlnet_states", None)
 
         layer = self.transformer.layers[kwargs["layer_id"]]
         adaLN_modulation = self.adaLN_modulations[kwargs["layer_id"]]
@@ -524,6 +525,11 @@ class AdaLNMixin(BaseMixin):
             img_attention_output = layer.third_layernorm(img_attention_output)
         img_hidden_states = img_hidden_states + gate_msa * img_attention_output  # (b,(t n),d)
         text_hidden_states = text_hidden_states + text_gate_msa * text_attention_output  # (b,n,d)
+
+        layer_id = kwargs["layer_id"]
+        if controlnet_states is not None and layer_id < len(controlnet_states):
+            controlnet_state = controlnet_states[layer_id]
+            img_hidden_states += controlnet_state
 
         # mlp (b,(t n),d)
         img_mlp_input = layer.post_attention_layernorm(img_hidden_states)  # vision (b,(t n),d)
@@ -770,7 +776,7 @@ class DiffusionTransformer(BaseModel):
 
         return
 
-    def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
+    def forward(self, x, timesteps=None, context=None, y=None, control_net=None, **kwargs):
         b, t, d, h, w = x.shape
         if x.dtype != self.dtype:
             x = x.to(self.dtype)
@@ -794,11 +800,24 @@ class DiffusionTransformer(BaseModel):
             y = y.repeat_interleave(x.shape[0] // y.shape[0], dim=0)
             emb = emb + self.label_emb(y)
 
+        # Extract controlnet states at current timestep if control_net is available
+        controlnet_states = None
+        if control_net is not None:
+            controlnet_states = control_net(
+                hidden_states=x[:,:,self.in_channels // 2:,:,:].clone(),
+                encoder_hidden_states=context.clone(),
+                controlnet_states=kwargs["concat_images_with_cond"],
+                timestep=emb.clone(),
+                return_dict=True
+            ).sample
+            controlnet_states = [state.detach() for state in controlnet_states]
+
         kwargs["seq_length"] = t * h * w // (self.patch_size**2)
         kwargs["images"] = x
         kwargs["emb"] = emb
         kwargs["encoder_outputs"] = context
         kwargs["text_length"] = context.shape[1]
+        kwargs["controlnet_states"] = controlnet_states
 
         kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
         output = super().forward(**kwargs)[0]

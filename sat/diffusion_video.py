@@ -24,6 +24,7 @@ import os
 import cv2
 import numpy as np 
 from sgm import draw_segmentation_overlay, draw_annotations, add_color_conditions_to_frames, add_original_color_conditions_to_frames, add_noised_conditions_to_frames, add_noise_to_rgb
+import copy
 
 class SATVideoDiffusionEngine(nn.Module):
     def __init__(self, args, **kwargs):
@@ -93,7 +94,7 @@ class SATVideoDiffusionEngine(nn.Module):
             for name, params in self.model.state_dict().items():
                 if 'patch_embed.proj.weight' in name:
                     continue
-                controlnet_state_dict[name] = params
+                controlnet_state_dict[name] = copy.deepcopy(params)
             m, u = self.control_net.load_state_dict(controlnet_state_dict, strict=False)
             print(f'[ Weights from transformer was loaded into controlnet ] [M: {len(m)} | U: {len(u)}]')
 
@@ -142,7 +143,7 @@ class SATVideoDiffusionEngine(nn.Module):
     def forward(self, x, batch):
         """Forward pass with optional pixel space loss"""
         loss, model_output, noised_input, alphas_cumprod_sqrt = self.loss_fn(
-            self.model, self.denoiser, self.conditioner, x, batch
+            self.model, self.denoiser, self.conditioner, x, batch, control_net=self.control_net
         )
 
         if not self.pixel_space_loss:
@@ -227,38 +228,27 @@ class SATVideoDiffusionEngine(nn.Module):
         if self.noised_image_input:
             image = x[:, :, 0:1]
             image = self.add_noise_to_frame(image)
-            num_frames = batch['mask'].shape[1]  # Get number of frames from mask tensor
-
-            if self.noise_last_frame:
-                last_frame = self.add_noise_to_frame(x[:, :, -1:])
-                subsequent_frames = torch.zeros(
-                    (image.shape[0], image.shape[1], num_frames - 2, image.shape[3], image.shape[4]),
-                    device=image.device,
-                    dtype=image.dtype
-                )
-                image = torch.cat([image, subsequent_frames, last_frame], dim=2)
-            else:
-                subsequent_frames = torch.zeros(
-                    (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
-                    device=image.device,
-                    dtype=image.dtype
-                )
-                image = torch.cat([image, subsequent_frames], dim=2)
+            #; pudb.set_trace()
+            # Add noise based on the selected noise_mode
+            # concat_image, noise_masks = add_noised_conditions_to_frames(
+            #     torch.concat([image.clone(), torch.zeros_like(x[:, :, 1:])], dim=2), batch['bbox']
+            # ) if self.noise_mode == 'bbox' else add_color_conditions_to_frames(image.clone(), batch['mask'])
+            concat_image, noise_masks = add_noised_conditions_to_frames(
+                torch.zeros_like(x[:, :, :]), batch['bbox']
+            ) if self.noise_mode == 'bbox' else add_color_conditions_to_frames(image.clone(), batch['mask'])
             
-            image, noise_masks = add_noised_conditions_to_frames(
-                image, batch['bbox']
-            ) if self.noise_mode == 'bbox' else add_color_conditions_to_frames(image, batch['mask'])
-        
-
             image = self.encode_first_stage(image, batch)
+            concat_image = self.encode_first_stage(concat_image, batch)
 
         x = self.encode_first_stage(x, batch)
         x = x.permute(0, 2, 1, 3, 4).contiguous()
         if self.noised_image_input:
             image = image.permute(0, 2, 1, 3, 4).contiguous()
+            image = torch.concat([image, torch.zeros_like(x[:, 1:])], dim=1)
             if random.random() < self.noised_image_dropout:
                 image = torch.zeros_like(image)
             batch["concat_images"] = image
+            batch["concat_images_with_cond"] = concat_image.permute(0, 2, 1, 3, 4).contiguous()
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -340,10 +330,11 @@ class SATVideoDiffusionEngine(nn.Module):
                 sigma, 
                 c,
                 concat_images=concat_images,
+                control_net=self.control_net,
                 **additional_model_inputs
             )
 
-        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale, scale_emb=scale_emb, control_net=self.control_net)
+        samples = self.sampler(denoiser, randn, cond, uc=uc, scale=scale, scale_emb=scale_emb)
         samples = samples.to(self.dtype)
         return samples
 
@@ -428,35 +419,26 @@ class SATVideoDiffusionEngine(nn.Module):
         if self.noised_image_input:
             image = x[:, :, 0:1]
             image = self.add_noise_to_frame(image)
-            num_frames = batch['mask'].shape[1]
-
-            if self.noise_last_frame:
-                last_frame = self.add_noise_to_frame(x[:, :, -1:])
-                subsequent_frames = torch.zeros(
-                    (image.shape[0], image.shape[1], num_frames - 2, image.shape[3], image.shape[4]),
-                    device=image.device,
-                    dtype=image.dtype
-                )
-                # subsequent_frames = self.add_noise_to_frame(x[:, :, 1:-1])
-                image = torch.cat([image, subsequent_frames, last_frame], dim=2)
-            else:
-                subsequent_frames = torch.zeros(
-                    (image.shape[0], image.shape[1], num_frames - 1, image.shape[3], image.shape[4]),
-                    device=image.device,
-                    dtype=image.dtype
-                )
-                image = torch.cat([image, subsequent_frames], dim=2)
 
             # Add noise based on the selected noise_mode
-            image, noise_masks = add_noised_conditions_to_frames(
-                image, batch['bbox']
-            ) if self.noise_mode == 'bbox' else add_color_conditions_to_frames(image, batch['mask'])
-            
+            # concat_image, noise_masks = add_noised_conditions_to_frames(
+            #     torch.concat([image.clone(), torch.zeros_like(x[:, :, 1:])], dim=2), batch['bbox']
+            # ) if self.noise_mode == 'bbox' else add_color_conditions_to_frames(image.clone(), batch['mask'])
+            concat_image, noise_masks = add_noised_conditions_to_frames(
+                torch.zeros_like(x[:, :, :]), batch['bbox']
+            ) if self.noise_mode == 'bbox' else add_color_conditions_to_frames(image.clone(), batch['mask'])
+
             image = self.encode_first_stage(image, batch)
+
+            concat_image = self.encode_first_stage(concat_image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
+            image = torch.concat([image, torch.zeros_like(z[:, 1:])], dim=1)
 
             c["concat"] = image
+            c["concat_images_with_cond"] = concat_image.permute(0, 2, 1, 3, 4).contiguous()
+        
             uc["concat"] = image
+            uc["concat_images_with_cond"] = concat_image.permute(0, 2, 1, 3, 4).contiguous()
             samples = self.sample(c, shape=z.shape[1:], uc=uc, batch_size=N, **sampling_kwargs)
             samples = samples.permute(0, 2, 1, 3, 4).contiguous()
             
