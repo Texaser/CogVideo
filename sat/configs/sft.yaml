@@ -1,7 +1,7 @@
 args:
     checkpoint_activations: True # using gradient checkpointing
     model_parallel_size: 1
-    experiment_name: 5b-lora-i2v-test
+    experiment_name: 5b-lora-i2v-control-net
     mode: finetune
     load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
     no_load_rng: True
@@ -18,7 +18,7 @@ args:
     num_workers: 8
     force_train: True
     only_log_video_latents: False
-    wandb: True
+    wandb: False
     wandb_project_name: CogVideoX-new
 
 data:

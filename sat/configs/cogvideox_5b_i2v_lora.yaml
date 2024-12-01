@@ -4,10 +4,11 @@ model:
     latent_input: false
     noised_image_input: true
     noised_image_dropout: 0.05
-    noise_last_frame: true
+    noise_last_frame: false
     not_trainable_prefixes: ["all"] ## Using Lora
     pixel_space_loss: false
     noise_mode: "bbox" # bbox, segm
+    freeze_backbone: true
 
     log_keys:
         - txt
@@ -27,6 +28,13 @@ model:
                 params:
                     shift_scale: 1.0 # different from cogvideox_2b_infer.yaml
 
+    control_net_config:
+        target: sgm.modules.diffusionmodules.controlnet.CogVideoXControlnet
+        params:
+            num_layers: 8
+            num_attention_heads: 48
+            downscale_coef: 8
+            in_channels: 16
     network_config:
         target: dit_video_concat.DiffusionTransformer
         params:
