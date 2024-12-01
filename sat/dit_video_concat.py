@@ -458,6 +458,10 @@ class AdaLNMixin(BaseMixin):
             [nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 12 * hidden_size)) for _ in range(num_layers)]
         )
 
+        self.controlnet_scale_factor = nn.ParameterList(
+            [nn.Parameter(torch.zeros(1), requires_grad=True) for _ in range(8)]
+        )
+
         self.qk_ln = qk_ln
         if qk_ln:
             self.query_layernorm_list = nn.ModuleList(
@@ -529,7 +533,8 @@ class AdaLNMixin(BaseMixin):
         layer_id = kwargs["layer_id"]
         if controlnet_states is not None and layer_id < len(controlnet_states):
             controlnet_state = controlnet_states[layer_id]
-            img_hidden_states += controlnet_state
+            controlnet_scale_factor = self.controlnet_scale_factor[layer_id]
+            img_hidden_states = img_hidden_states + controlnet_scale_factor * controlnet_state
 
         # mlp (b,(t n),d)
         img_mlp_input = layer.post_attention_layernorm(img_hidden_states)  # vision (b,(t n),d)
