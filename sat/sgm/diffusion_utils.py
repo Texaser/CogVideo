@@ -86,8 +86,7 @@ def add_noised_conditions_to_frames(image, bbox_tensor):
                     # Generate noise scaled by the encoded Gaussian mask
                     noise = torch.randn(C, h, w, device=image.device, dtype=image.dtype) * encoded_gaussian
 
-                    # Add noise to the image in place
-                    image[b, :, t, y1:y2, x1:x2] += noise
+                    image[b, :, t, y1:y2, x1:x2].copy_(image[b, :, t, y1:y2, x1:x2] + noise)
 
                     # Store the noise mask
                     noise_masks[b, :, t, y1:y2, x1:x2] = noise

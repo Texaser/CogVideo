@@ -22,7 +22,7 @@ export PYTHONWARNINGS="ignore"
 export CUDA_LAUNCH_BLOCKING=1
 
 # TODO: change to the device(s) you wish to run on
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 
 TORCHRUN_OPTIONS=(
     --standalone

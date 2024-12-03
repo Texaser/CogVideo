@@ -43,7 +43,7 @@ class VanillaCFG:
 
     def prepare_inputs(self, x, s, c, uc):
         c_out = dict()
-
+        import pudb; pudb.set_trace()
         for k in c:
             if k in ["vector", "crossattn", "concat", "concat_images_with_cond"]:
                 c_out[k] = torch.cat((uc[k], c[k]), 0)
