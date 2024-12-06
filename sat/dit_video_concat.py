@@ -19,6 +19,11 @@ from sgm.modules.diffusionmodules.util import (
 )
 from sat.ops.layernorm import LayerNorm, RMSNorm
 
+from typing import Dict, List
+import matplotlib.pyplot as plt
+from datetime import datetime
+import os
+import math
 
 class ImagePatchEmbeddingMixin(BaseMixin):
     def __init__(
@@ -434,6 +439,153 @@ class SwiGLUMixin(BaseMixin):
         x = origin.dense_4h_to_h(hidden)
         return x
 
+class AttentionStore:
+    def __init__(self, save_dir="attention_vis_test_2"):
+        self.step_store = self.get_empty_store()
+        self.attention_store = {}
+        self.save_dir = save_dir
+        os.makedirs(save_dir, exist_ok=True)
+        self.step_count = 0
+
+    @staticmethod
+    def get_empty_store():
+        return {
+            "down_cross": [],
+            "mid_cross": [],
+            "up_cross": []
+        }
+
+    # def visualize_attention(self, attn, layer_name, text_length):
+    #     """
+    #     Visualize attention maps for video data with raw attention scores (before softmax).
+    #     attn shape: [B, H, S_image, S_bbox]
+    #     """
+    #     attn = attn.to("cpu").float()  # Convert to CPU for processing
+
+    #     avg_attn = attn.mean(dim=1)
+
+    #     B, N_image, N_bbox = avg_attn.shape
+
+    #     T = 13   
+    #     H = 30  
+    #     W = 45
+
+    #     assert N_image == T * H * W, f"Mismatch: Expected N_image={T * H * W}, got {N_image}"
+
+    #     for b in range(B):
+    #         print(f"Processing batch {b+1}/{B}")
+
+    #         fig, axes = plt.subplots(T, 1, figsize=(6, 4 * T))
+
+    #         if T == 1:
+    #             axes = [axes]  
+
+    #         batch_attn = avg_attn[b]  
+
+    #         for t in range(T):
+    #             frame_start = t * H * W
+    #             frame_end = (t + 1) * H * W
+
+    #             frame_attn = batch_attn[frame_start:frame_end]  
+
+    #             avg_frame_attn = frame_attn.mean(dim=-1).reshape(H, W)
+
+    #             im = axes[t].imshow(avg_frame_attn.numpy(), cmap="viridis")
+    #             axes[t].set_title(f"Frame {t} (Averaged Over BBox Tokens)")
+    #             plt.colorbar(im, ax=axes[t])
+
+    #         plt.tight_layout()
+
+    #         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    #         save_path = os.path.join(
+    #             self.save_dir, f"attn_scores_step{self.step_count}_batch{b}_{layer_name}_{timestamp}.png"
+    #         )
+    #         plt.savefig(save_path)
+    #         plt.close()
+
+    #         print(f"Saved visualization to {save_path}")
+
+    #         del batch_attn
+
+    #     del avg_attn
+    #     torch.cuda.empty_cache()
+
+    def visualize_attention(self, attn, layer_name, text_length):
+        """
+        Visualize attention maps with raw attention outputs.
+        attn shape: [B, H, S_q, D_k]
+        """
+        attn = attn.to("cpu").float()  # Convert to CPU for processing
+
+        # avg Attention Head
+        avg_attn = attn.mean(dim=1)  # Shape: [B, S_q, D_k]
+
+        B, S_q, D_k = avg_attn.shape
+
+        T = 13  
+        H = 30  
+        W = 45  
+        assert S_q == T * H * W, f"Mismatch: Expected S_q={T * H * W}, got {S_q}"
+
+        for b in range(B):
+            print(f"Processing batch {b+1}/{B}")
+
+            fig, axes = plt.subplots(T, 1, figsize=(6, 4 * T))
+
+            if T == 1:
+                axes = [axes]  
+
+            batch_attn = avg_attn[b]  # Shape: [S_q, D_k]
+
+            for t in range(T):
+                frame_start = t * H * W
+                frame_end = (t + 1) * H * W
+
+                frame_attn = batch_attn[frame_start:frame_end, :]  # Shape: [H*W, D_k]
+
+                avg_frame_attn = frame_attn.mean(dim=-1).reshape(H, W)  # Shape: [H, W]
+
+                im = axes[t].imshow(avg_frame_attn.numpy(), cmap="viridis")
+                axes[t].set_title(f"Frame {t} (Averaged Over D_k)")
+                plt.colorbar(im, ax=axes[t])
+
+            plt.tight_layout()
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = os.path.join(
+                self.save_dir, f"attn_outputs_step{self.step_count}_batch{b}_{layer_name}_{timestamp}.png"
+            )
+            plt.savefig(save_path)
+            plt.close(fig)
+
+            print(f"Saved visualization to {save_path}")
+
+            del batch_attn
+
+        del avg_attn
+        torch.cuda.empty_cache()
+
+
+    def store_attention(self, attn, layer_name: str, text_length: int):
+        """
+        Store and visualize attention maps
+        """
+        key = f"{layer_name}_cross"
+        # self.step_store[key].append(attn)
+
+        with torch.no_grad():
+            try:
+                self.visualize_attention(attn.detach(), layer_name, text_length)
+            except Exception as e:
+                print(f"Visualization failed: {e}")
+                print(f"Attention tensor shape: {attn.shape}")
+            torch.cuda.empty_cache()
+
+    def reset(self):
+        self.step_store = self.get_empty_store()
+        self.attention_store = {}
+        torch.cuda.empty_cache()
+
 
 class AdaLNMixin(BaseMixin):
     def __init__(
@@ -447,13 +599,14 @@ class AdaLNMixin(BaseMixin):
         qk_ln=True,
         hidden_size_head=None,
         elementwise_affine=True,
+        attention_vis_dir="attention_vis_test_2",
     ):
         super().__init__()
         self.num_layers = num_layers
         self.width = width
         self.height = height
         self.compressed_num_frames = compressed_num_frames
-
+        self.attention_store = AttentionStore(save_dir=attention_vis_dir)
         self.adaLN_modulations = nn.ModuleList(
             [nn.Sequential(nn.SiLU(), nn.Linear(time_embed_dim, 12 * hidden_size)) for _ in range(num_layers)]
         )
@@ -568,7 +721,7 @@ class AdaLNMixin(BaseMixin):
             query_layer = query_layernorm(query_layer)
             key_layer = key_layernorm(key_layer)
 
-        return old_impl(
+        context_layer = old_impl(
             query_layer,
             key_layer,
             value_layer,
@@ -578,6 +731,55 @@ class AdaLNMixin(BaseMixin):
             scaling_attention_score=scaling_attention_score,
             **kwargs,
         )
+
+        # Check if this is cross attention
+        is_cross = True
+        if is_cross:
+            text_length = kwargs["text_length"]
+            # import pudb; pudb.set_trace()
+            # Extract queries for player tokens only
+            _, _, _, D = query_layer.shape
+            d = D // 2
+            query_layer_bbox = query_layer[:, :, text_length:, d:] #(1, 48, 17550, 32) 
+            key_layer_image= key_layer[:, :, text_length:, :d] 
+            value_layer_image = value_layer[:, :, text_length:, :d]
+            # Scale queries if necessary
+            # if scaling_attention_score:
+                # query_layer_text = query_layer_text / math.sqrt(query_layer_text.shape[-1])
+            if scaling_attention_score:
+                query_layer_bbox = query_layer_bbox / math.sqrt(query_layer_bbox.shape[-1])
+
+            # # attention_scores = torch.matmul(query_layer_text, key_layer_image.transpose(-1, -2))
+            # from torch.cuda.amp import autocast
+
+            attention_scores = torch.matmul(query_layer_bbox, key_layer_image.transpose(-1, -2)) 
+
+            # # # Compute attention probabilities
+            attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
+            # from xformers.ops import memory_efficient_attention
+
+            # value_layer_image = key_layer_image  # (1, 48, 17550, 32)
+            # from xformers.ops import memory_efficient_attention
+            # attention_probs = memory_efficient_attention(
+            #     query_layer_bbox,  # Q
+            #     key_layer_image,   # K
+            #     value_layer_image, # V
+            #     attn_bias=None,    
+            #     scale=1.0 / (query_layer_bbox.shape[-1]**0.5)  
+            # )
+            # Determine layer position
+            layer_id = kwargs["layer_id"]
+            if layer_id < self.num_layers // 3:
+                pos = "down_" + str(layer_id)
+            elif layer_id < 2 * self.num_layers // 3:
+                pos = "mid_" + str(layer_id)
+            else:
+                pos = "up_" + str(layer_id)
+
+            # Store attention maps
+            self.attention_store.store_attention(attention_probs, pos, text_length)
+
+        return context_layer
 
 
 str_to_dtype = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
