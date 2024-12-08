@@ -18,7 +18,9 @@ from sgm.modules.diffusionmodules.util import (
     timestep_embedding,
 )
 from sat.ops.layernorm import LayerNorm, RMSNorm
-
+from typing import Optional
+import matplotlib.pyplot as plt
+import math
 
 class ImagePatchEmbeddingMixin(BaseMixin):
     def __init__(
@@ -434,7 +436,6 @@ class SwiGLUMixin(BaseMixin):
         x = origin.dense_4h_to_h(hidden)
         return x
 
-
 class AdaLNMixin(BaseMixin):
     def __init__(
         self,
@@ -582,6 +583,217 @@ class AdaLNMixin(BaseMixin):
 
 str_to_dtype = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
 
+
+class AttentionExtractor:
+    def __init__(self, max_stored_layers=3):
+        self.attention_maps = {}
+        self.max_stored_layers = max_stored_layers
+        
+    def clear(self):
+        self.attention_maps.clear()
+
+    def store_attention(self, attn_weights: torch.Tensor, layer_idx: int):
+        if len(self.attention_maps) < self.max_stored_layers:
+            mean_attention = attn_weights.mean(dim=1).detach().cpu()
+            self.attention_maps[layer_idx] = mean_attention
+            print(f"Stored averaged attention for layer {layer_idx}")
+        
+    def get_attention_maps(self, 
+                         source_range: tuple[int, int],
+                         target_range: Optional[tuple[int, int]] = None,
+                         layer_idx: Optional[int] = None,
+                         normalize: bool = True,
+                         aggregation: str = 'mean') -> torch.Tensor:
+        """
+        Extract attention maps for arbitrary source and target ranges
+        Args:
+            source_range: Tuple of (start_idx, end_idx) for source tokens
+            target_range: Tuple of (start_idx, end_idx) for target tokens. If None, uses full sequence
+            layer_idx: Specific layer to extract from (None for all stored layers)
+            normalize: Whether to normalize attention weights
+            aggregation: How to aggregate attention across tokens ('mean' or 'max')
+        """
+        src_start, src_end = source_range
+        
+        if layer_idx is not None:
+            if layer_idx not in self.attention_maps:
+                raise ValueError(f"Layer {layer_idx} not found in stored attention maps")
+            attention_maps = [self.attention_maps[layer_idx]]
+        else:
+            attention_maps = list(self.attention_maps.values())
+            
+        # Stack attention maps from selected layers
+        attn_stack = torch.stack(attention_maps)  # [stored_layers, batch, seq_len, seq_len]
+        
+        # Extract attention from source range
+        if target_range is not None:
+            tgt_start, tgt_end = target_range
+            attention = attn_stack[..., src_start:src_end, tgt_start:tgt_end]
+        else:
+            attention = attn_stack[..., src_start:src_end, :]
+        
+        # Aggregate attention across the source range
+        if aggregation == 'mean':
+            attention = attention.mean(dim=-2)  # Average across source tokens
+        elif aggregation == 'max':
+            attention = attention.max(dim=-2)[0]  # Max across source tokens
+        else:
+            raise ValueError(f"Unsupported aggregation method: {aggregation}")
+            
+        if normalize:
+            attention = attention / attention.max()
+            
+        return attention
+
+    def visualize_attention(self,
+                          attn_maps: torch.Tensor,
+                          spatial_dims: Optional[tuple[int, ...]] = None,
+                          layer_range: Optional[tuple[int, int]] = None,
+                          cmap: str = 'viridis',
+                          title_prefix: str = "") -> None:
+        """
+        Visualize attention maps
+        Args:
+            attn_maps: Attention weights [layers, batch, seq_len]
+            spatial_dims: Optional tuple of dimensions to reshape attention into (e.g., (num_frames, height, width))
+            layer_range: Optional tuple of (start_idx, end_idx) for layer range
+            cmap: Colormap for visualization
+            title_prefix: Optional prefix for plot titles
+        """
+        # Convert to float32 for visualization
+        visual_attn = attn_maps.to(torch.float32)
+        
+        # Reshape to spatial dimensions if provided
+        if spatial_dims is not None:
+            visual_attn = rearrange(visual_attn, 
+                                  '... (d0 d1 d2) -> ... d0 d1 d2', 
+                                  d0=spatial_dims[0], d1=spatial_dims[1], d2=spatial_dims[2])
+        
+        # Get available layers
+        available_layers = sorted(list(self.attention_maps.keys()))
+        
+        # Determine which layers to plot
+        if layer_range is not None:
+            start_idx, end_idx = layer_range
+            plot_layers = [l for l in available_layers if start_idx <= l <= end_idx]
+            if not plot_layers:
+                raise ValueError(f"No layers found in range {layer_range}")
+        else:
+            plot_layers = available_layers
+        
+        # Create subplot grid
+        num_layers = len(plot_layers)
+        num_frames = spatial_dims[0] if spatial_dims else 1
+        fig_height = 3 * num_layers
+        plt.figure(figsize=(15, fig_height))
+        
+        for idx, layer_id in enumerate(plot_layers):
+            layer_idx = available_layers.index(layer_id)
+            
+            for t in range(num_frames):
+                plt.subplot(num_layers, num_frames, idx * num_frames + t + 1)
+                if spatial_dims:
+                    plt.imshow(visual_attn[layer_idx, 0, t].cpu().numpy(), cmap=cmap)
+                else:
+                    plt.imshow(visual_attn[layer_idx, 0].cpu().numpy(), cmap=cmap)
+                plt.axis('off')
+                
+                if t == 0:
+                    plt.title(f'Layer {layer_id}\nFrame {t}')
+                else:
+                    plt.title(f'Frame {t}')
+        
+        if title_prefix:
+            plt.suptitle(title_prefix, y=1.02)
+        
+        plt.tight_layout()
+        
+        range_str = f"_{layer_range[0]}-{layer_range[1]}" if layer_range else ""
+        plt.savefig(f'attention_layers{range_str}.png', bbox_inches='tight')
+        plt.close()
+
+
+class AdaLNMixinWithAttention(AdaLNMixin):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.attention_extractor = AttentionExtractor(max_stored_layers=42)
+
+    @non_conflict    
+    def attention_fn(self,
+                    query_layer,
+                    key_layer,
+                    value_layer,
+                    attention_mask,
+                    attention_dropout=None,
+                    log_attention_weights=None,
+                    scaling_attention_score=True,
+                    old_impl=attention_fn_default,
+                    **kwargs):
+        """Modified attention function with fixed causal mask handling"""
+        if self.qk_ln:
+            query_layernorm = self.query_layernorm_list[kwargs["layer_id"]]
+            key_layernorm = self.key_layernorm_list[kwargs["layer_id"]]
+            query_layer = query_layernorm(query_layer)
+            key_layer = key_layernorm(key_layer)
+
+        # Check PyTorch version and conditions for optimized attention
+        if int(torch.__version__.split('.')[0]) >= 2 and scaling_attention_score:
+            # Determine if the mask represents causal attention
+            is_causal = False
+            is_full = False
+            
+            if attention_mask is None:
+                is_full = True
+            else:
+                # Create tril matrix of same shape as attention mask
+                tril_matrix = torch.ones_like(attention_mask, dtype=torch.float).tril()
+                # Check if mask is equivalent to tril matrix
+                is_causal = torch.all(attention_mask == tril_matrix).item()
+                is_full = torch.all(attention_mask > 0).item()
+
+            if is_full or is_causal:
+                dropout_p = 0. if attention_dropout is None or not attention_dropout.training else attention_dropout.p
+                
+                # Use optimized attention with correct boolean is_causal
+                context_layer = torch.nn.functional.scaled_dot_product_attention(
+                    query_layer, key_layer, value_layer,
+                    attn_mask=None,  # We handle the mask through is_causal
+                    dropout_p=dropout_p,
+                    is_causal=is_causal
+                )
+                
+                # Extract attention maps for visualization if needed
+                if kwargs["layer_id"] in range(24, 33):
+                    with torch.no_grad():
+                        if scaling_attention_score:
+                            query_scaled = query_layer / math.sqrt(query_layer.shape[-1])
+                        else:
+                            query_scaled = query_layer
+                        
+                        # Process in chunks to manage memory
+                        chunk_size = 128
+                        num_chunks = (query_scaled.shape[2] + chunk_size - 1) // chunk_size
+                        attention_chunks = []
+                        
+                        for i in range(num_chunks):
+                            start_idx = i * chunk_size
+                            end_idx = min((i + 1) * chunk_size, query_scaled.shape[2])
+                            
+                            attn_chunk = torch.matmul(
+                                query_scaled[:, :, start_idx:end_idx],
+                                key_layer.transpose(-1, -2)
+                            )
+                            
+                            if attention_mask is not None:
+                                attn_chunk = attn_chunk + attention_mask[:, :, start_idx:end_idx]
+                            
+                            attn_chunk = torch.softmax(attn_chunk, dim=-1)
+                            attention_chunks.append(attn_chunk)
+                        
+                        attention_weights = torch.cat(attention_chunks, dim=2)
+                        self.attention_extractor.store_attention(attention_weights, kwargs["layer_id"])
+                        
+                return context_layer
 
 class DiffusionTransformer(BaseModel):
     def __init__(

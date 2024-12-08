@@ -1,13 +1,13 @@
 args:
     checkpoint_activations: True # using gradient checkpointing
     model_parallel_size: 1
-    experiment_name: 5b-lora-i2v-test
+    experiment_name: 5b-lora-i2v-token
     mode: finetune
     load: "/mnt/mir/fan23j/CogVideo/pretrained/5b-i2v"
     no_load_rng: True
     train_iters: 10000 # Suggest more than 1000 For Lora and SFT For 500 is enough
     eval_iters: 1
-    eval_interval: 2
+    eval_interval: 5
     eval_batch_size: 1
     save: ckpts_5b_lora_test
     save_interval: 5000
@@ -18,7 +18,7 @@ args:
     num_workers: 8
     force_train: True
     only_log_video_latents: False
-    wandb: True
+    wandb: False
     wandb_project_name: CogVideoX-new
 
 data:

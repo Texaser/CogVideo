@@ -6,7 +6,8 @@ from omegaconf import ListConfig
 from ...util import append_dims, instantiate_from_config
 from ...modules.autoencoding.lpips.loss.lpips import LPIPS
 from sat import mpu
-
+import matplotlib.pyplot as plt
+from einops import rearrange
 
 class StandardDiffusionLoss(nn.Module):
     def __init__(
@@ -61,6 +62,36 @@ class StandardDiffusionLoss(nn.Module):
             loss = self.lpips(model_output, target).reshape(-1)
             return loss
 
+def tokencompose_loss(attention_maps: torch.Tensor, 
+                               instance_masks: torch.Tensor,
+                               spatial_dims: tuple[int, int, int] = (13, 30, 45),  # (frames, height, width)
+                               normalize_attention: bool = True) -> dict:
+    # Reshape attention maps to match spatial dimensions
+    attention_maps = rearrange(attention_maps, 
+                             '... (f h w) -> ... f h w',
+                             f=spatial_dims[0], h=spatial_dims[1], w=spatial_dims[2])
+    
+    # Average attention across layers
+    avg_attention = attention_maps.mean(dim=0) 
+    
+    if normalize_attention:
+        # Normalize attention maps per frame
+        avg_attention = avg_attention / (avg_attention.reshape(*avg_attention.shape[:-2], -1)
+                                                    .sum(dim=-1)[..., None, None] + 1e-8)
+    
+    # Token loss
+    activation_values = (avg_attention * instance_masks).reshape(*avg_attention.shape[:-2], -1).sum(dim=-1) / \
+                       (avg_attention.reshape(*avg_attention.shape[:-2], -1).sum(dim=-1) + 1e-8)
+    token_loss = (1.0 - activation_values).pow(2).mean()
+    
+    # Pixel loss
+    bce_loss = torch.nn.BCELoss(reduction='mean')
+    pixel_loss = bce_loss(avg_attention, instance_masks)
+    
+    return {
+        "token_loss": token_loss,
+        "pixel_loss": pixel_loss
+    }
 
 class VideoDiffusionLoss(StandardDiffusionLoss):
     def __init__(self, block_scale=None, block_size=None, min_snr_value=None, fixed_frames=0, **kwargs):
@@ -108,6 +139,41 @@ class VideoDiffusionLoss(StandardDiffusionLoss):
     
         # Compute the diffusion loss
         loss = self.get_loss(model_output, input, w)
+
+        # Compute tokencompose loss
+        attention_module = network.diffusion_model.get_mixin("adaln_layer")
+
+        attn_maps = attention_module.attention_extractor.get_attention_maps(
+            # text - video
+            source_range=(0, 226),
+            target_range=(226, 17776),
+            # full
+            # source_range=(0, 17776),
+            # target_range=(0, 17776),
+            # video - video
+            # source_range=(226, 17776),
+            # target_range=(226, 17776),
+            normalize=True
+        )
+
+        # attention_module.attention_extractor.visualize_attention(
+        #     attn_maps=attn_maps,
+        #     spatial_dims=(13, 30, 45),  # (frames, height, width)
+        #     layer_range=(0, 42)
+        # )
+
+        import pudb; pudb.set_trace()
+
+        compose_losses = tokencompose_loss(
+            attention_maps=attn_maps,
+            instance_masks=batch['mask'],
+            spatial_dims=(13, 30, 45)  # Match visualization dimensions
+        )
+
+        loss = loss + compose_losses['token_loss'] + compose_losses['pixel_loss']
+        
+        attention_module.attention_extractor.clear()
+
     
         # Return additional values needed for x0 reconstruction
         return loss, model_output, noised_input, alphas_cumprod_sqrt

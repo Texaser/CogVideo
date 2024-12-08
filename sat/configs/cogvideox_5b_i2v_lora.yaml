@@ -4,7 +4,7 @@ model:
     latent_input: false
     noised_image_input: true
     noised_image_dropout: 0.05
-    noise_last_frame: true
+    noise_last_frame: false
     not_trainable_prefixes: ["all"] ## Using Lora
     pixel_space_loss: false
     noise_mode: "bbox" # bbox, segm
@@ -72,7 +72,7 @@ model:
                         text_hidden_size: 4096
 
                 adaln_layer_config:
-                    target: dit_video_concat.AdaLNMixin
+                    target: dit_video_concat.AdaLNMixinWithAttention
                     params:
                         qk_ln: True
 

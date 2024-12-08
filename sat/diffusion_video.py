@@ -386,6 +386,7 @@ class SATVideoDiffusionEngine(nn.Module):
         x = x.permute(0, 2, 1, 3, 4).contiguous()
         if self.noised_image_input:
             image = image.permute(0, 2, 1, 3, 4).contiguous()
+            #image = torch.concat([image, torch.zeros_like(x[:, 1:])], dim=1)
             if random.random() < self.noised_image_dropout:
                 image = torch.zeros_like(image)
             batch["concat_images"] = image
@@ -578,7 +579,7 @@ class SATVideoDiffusionEngine(nn.Module):
             
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
-
+            #image = torch.concat([image, torch.zeros_like(z[:, 1:])], dim=1)
             c["concat"] = image
             uc["concat"] = image
             samples = self.sample(c, shape=z.shape[1:], uc=uc, batch_size=N, **sampling_kwargs)
