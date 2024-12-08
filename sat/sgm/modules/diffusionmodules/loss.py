@@ -8,6 +8,7 @@ from ...modules.autoencoding.lpips.loss.lpips import LPIPS
 from sat import mpu
 import matplotlib.pyplot as plt
 from einops import rearrange
+import torch.nn.functional as F
 
 class StandardDiffusionLoss(nn.Module):
     def __init__(
@@ -63,13 +64,49 @@ class StandardDiffusionLoss(nn.Module):
             return loss
 
 def tokencompose_loss(attention_maps: torch.Tensor, 
-                               instance_masks: torch.Tensor,
-                               spatial_dims: tuple[int, int, int] = (13, 30, 45),  # (frames, height, width)
-                               normalize_attention: bool = True) -> dict:
+                     instance_masks: torch.Tensor,
+                     spatial_dims: tuple[int, int, int] = (13, 30, 45),  # (frames, height, width)
+                     normalize_attention: bool = True) -> dict:
+    """
+    Args:
+        attention_maps: Shape [1, frames, height, width]
+        instance_masks: Shape [B, frames=49, instances=10, height, width]
+        spatial_dims: Target spatial dimensions (frames=13, height=30, width=45)
+    """
     # Reshape attention maps to match spatial dimensions
     attention_maps = rearrange(attention_maps, 
                              '... (f h w) -> ... f h w',
                              f=spatial_dims[0], h=spatial_dims[1], w=spatial_dims[2])
+    
+    B, _F , I, H, W = instance_masks.shape  # B=1, F=49, I=10, H=480, W=720
+    
+    # Sum across all instance masks for each frame
+    instance_masks = instance_masks.sum(dim=2)  # Shape: [B, F, H, W]
+    
+    # Reshape for temporal interpolation: treat frames as batch dimension
+    instance_masks = instance_masks.permute(0, 2, 3, 1)  # [B, H, W, F]
+    instance_masks = instance_masks.reshape(-1, _F)       # [B*H*W, F]
+    instance_masks = F.interpolate(
+        instance_masks.unsqueeze(1),                     # [B*H*W, 1, F]
+        size=(spatial_dims[0],),                         # Target: 13 frames
+        mode='linear',
+        align_corners=False
+    )
+    instance_masks = instance_masks.squeeze(1)           # [B*H*W, 13]
+    instance_masks = instance_masks.reshape(B, H, W, spatial_dims[0])  # [B, H, W, 13]
+    instance_masks = instance_masks.permute(0, 3, 1, 2)  # [B, 13, H, W]
+    
+    # Now resize spatial dimensions
+    instance_masks = F.interpolate(
+        instance_masks,  # Shape: [B, 13, H, W]
+        size=(spatial_dims[1], spatial_dims[2]),  # Target: [B, 13, 30, 45]
+        mode='bilinear',
+        align_corners=False
+    )
+    
+    # Skip first frame - only compute loss for remaining frames
+    instance_masks = instance_masks[:, 1:]  # Shape: [B, 12, 30, 45]
+    attention_maps = attention_maps[:, 1:]  # Shape: [B, 12, 30, 45]
     
     # Average attention across layers
     avg_attention = attention_maps.mean(dim=0) 

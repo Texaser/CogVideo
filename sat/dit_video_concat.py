@@ -21,6 +21,7 @@ from sat.ops.layernorm import LayerNorm, RMSNorm
 from typing import Optional
 import matplotlib.pyplot as plt
 import math
+from sat import mpu
 
 class ImagePatchEmbeddingMixin(BaseMixin):
     def __init__(
@@ -723,77 +724,86 @@ class AdaLNMixinWithAttention(AdaLNMixin):
                     query_layer,
                     key_layer,
                     value_layer,
-                    attention_mask,
+                    attention_mask,  # Will always be [1.]
                     attention_dropout=None,
                     log_attention_weights=None,
                     scaling_attention_score=True,
                     old_impl=attention_fn_default,
                     **kwargs):
-        """Modified attention function with fixed causal mask handling"""
+        """Simplified attention function optimized for full attention masks"""
+        # Handle multi-query attention expansion
+        batch_size, num_query_heads = query_layer.shape[:2]
+        num_kv_heads = key_layer.shape[1]
+        if num_query_heads != num_kv_heads:
+            key_layer = key_layer.unsqueeze(2).expand(
+                -1, -1, num_query_heads//num_kv_heads, -1, -1
+            ).contiguous().view(batch_size, num_query_heads, *key_layer.shape[2:])
+            value_layer = value_layer.unsqueeze(2).expand(
+                -1, -1, num_query_heads//num_kv_heads, -1, -1
+            ).contiguous().view(batch_size, num_query_heads, *value_layer.shape[2:])
+
+        # Apply layer normalization if configured
         if self.qk_ln:
             query_layernorm = self.query_layernorm_list[kwargs["layer_id"]]
             key_layernorm = self.key_layernorm_list[kwargs["layer_id"]]
             query_layer = query_layernorm(query_layer)
             key_layer = key_layernorm(key_layer)
 
-        # Check PyTorch version and conditions for optimized attention
+        # Use PyTorch 2.0's optimized attention if available
         if int(torch.__version__.split('.')[0]) >= 2 and scaling_attention_score:
-            # Determine if the mask represents causal attention
-            is_causal = False
-            is_full = False
+            dropout_p = 0. if attention_dropout is None or not attention_dropout.training else attention_dropout.p
             
-            if attention_mask is None:
-                is_full = True
+            if dropout_p > 0 and mpu.get_cuda_rng_tracker is not None:
+                with mpu.get_cuda_rng_tracker().fork():
+                    context_layer = torch.nn.functional.scaled_dot_product_attention(
+                        query_layer, key_layer, value_layer,
+                        attn_mask=None,
+                        dropout_p=dropout_p,
+                        is_causal=False  # Since we know it's full attention
+                    )
             else:
-                # Create tril matrix of same shape as attention mask
-                tril_matrix = torch.ones_like(attention_mask, dtype=torch.float).tril()
-                # Check if mask is equivalent to tril matrix
-                is_causal = torch.all(attention_mask == tril_matrix).item()
-                is_full = torch.all(attention_mask > 0).item()
-
-            if is_full or is_causal:
-                dropout_p = 0. if attention_dropout is None or not attention_dropout.training else attention_dropout.p
-                
-                # Use optimized attention with correct boolean is_causal
                 context_layer = torch.nn.functional.scaled_dot_product_attention(
                     query_layer, key_layer, value_layer,
-                    attn_mask=None,  # We handle the mask through is_causal
+                    attn_mask=None,
                     dropout_p=dropout_p,
-                    is_causal=is_causal
+                    is_causal=False
                 )
+            
+            # Calculate attention probs for storage if needed
+            if kwargs["layer_id"] in range(24, 33):
+                with torch.no_grad():
+                    attn_weights = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+                    if scaling_attention_score:
+                        attn_weights = attn_weights / math.sqrt(query_layer.shape[-1])
+                    attention_probs = torch.nn.functional.softmax(attn_weights, dim=-1)
+                    self.attention_extractor.store_attention(attention_probs, kwargs["layer_id"])
+        
+        else:
+            # Standard attention implementation
+            if scaling_attention_score:
+                query_layer = query_layer / math.sqrt(query_layer.shape[-1])
                 
-                # Extract attention maps for visualization if needed
-                if kwargs["layer_id"] in range(24, 33):
-                    with torch.no_grad():
-                        if scaling_attention_score:
-                            query_scaled = query_layer / math.sqrt(query_layer.shape[-1])
-                        else:
-                            query_scaled = query_layer
-                        
-                        # Process in chunks to manage memory
-                        chunk_size = 128
-                        num_chunks = (query_scaled.shape[2] + chunk_size - 1) // chunk_size
-                        attention_chunks = []
-                        
-                        for i in range(num_chunks):
-                            start_idx = i * chunk_size
-                            end_idx = min((i + 1) * chunk_size, query_scaled.shape[2])
-                            
-                            attn_chunk = torch.matmul(
-                                query_scaled[:, :, start_idx:end_idx],
-                                key_layer.transpose(-1, -2)
-                            )
-                            
-                            if attention_mask is not None:
-                                attn_chunk = attn_chunk + attention_mask[:, :, start_idx:end_idx]
-                            
-                            attn_chunk = torch.softmax(attn_chunk, dim=-1)
-                            attention_chunks.append(attn_chunk)
-                        
-                        attention_weights = torch.cat(attention_chunks, dim=2)
-                        self.attention_extractor.store_attention(attention_weights, kwargs["layer_id"])
-                        
-                return context_layer
+            attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+            
+            if log_attention_weights is not None:
+                attention_scores = attention_scores + log_attention_weights
+
+            attention_probs = torch.nn.functional.softmax(attention_scores, dim=-1)
+
+            # Store attention probabilities for layers 24-32
+            if kwargs["layer_id"] in range(24, 33):
+                self.attention_extractor.store_attention(attention_probs, kwargs["layer_id"])
+
+            if attention_dropout is not None:
+                if mpu.get_cuda_rng_tracker is not None:
+                    with mpu.get_cuda_rng_tracker().fork():
+                        attention_probs = attention_dropout(attention_probs)
+                else:
+                    attention_probs = attention_dropout(attention_probs)
+
+            context_layer = torch.matmul(attention_probs, value_layer)
+
+        return context_layer
 
 class DiffusionTransformer(BaseModel):
     def __init__(
