@@ -8,11 +8,9 @@
 
 set -e  # exit script if any command fails
 
-cd /mnt/mir/fan23j/CogVideo/sat
-
 # find this path using `which conda`
-CONDA_PATH="/home/fan23j/anaconda3/"
-VENV_NAME="cogvideo"
+CONDA_PATH="/home/hanyi/miniconda3/"
+VENV_NAME="cog"
 
 source "${CONDA_PATH}/etc/profile.d/conda.sh"
 conda activate "${VENV_NAME}"

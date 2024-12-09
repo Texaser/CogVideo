@@ -54,6 +54,7 @@ class SATVideoDiffusionEngine(nn.Module):
         self.noised_image_dropout = model_config.get("noised_image_dropout", 0.0)
         self.noise_last_frame = model_config.get("noise_last_frame", False)
         self.pixel_space_loss = model_config.get("pixel_space_loss", False)
+        self.token_compose_loss = model_config.get("token_compose_loss", False)
         self.noise_mode = model_config.get("noise_mode", "bbox")
 
     def reinit(self, parent_model=None):
@@ -116,7 +117,7 @@ class SATVideoDiffusionEngine(nn.Module):
     def forward(self, x, batch):
         """Forward pass with optional pixel space loss"""
         loss, model_output, noised_input, alphas_cumprod_sqrt = self.loss_fn(
-            self.model, self.denoiser, self.conditioner, x, batch
+            self.model, self.denoiser, self.conditioner, x, batch, self.token_compose_loss
         )
 
         if not self.pixel_space_loss:
@@ -375,10 +376,9 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
             
-            if self.noise_mode != 'none':
-                image, noise_masks = self.add_noised_conditions_to_frames(
-                    image, batch['bbox']
-                ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
+            image, noise_masks = self.add_noised_conditions_to_frames(
+                image, batch['bbox']
+            ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
         
 
             image = self.encode_first_stage(image, batch)
@@ -387,6 +387,7 @@ class SATVideoDiffusionEngine(nn.Module):
         x = x.permute(0, 2, 1, 3, 4).contiguous()
         if self.noised_image_input:
             image = image.permute(0, 2, 1, 3, 4).contiguous()
+            #image = torch.concat([image, torch.zeros_like(x[:, 1:])], dim=1)
             if random.random() < self.noised_image_dropout:
                 image = torch.zeros_like(image)
             batch["concat_images"] = image
@@ -572,15 +573,14 @@ class SATVideoDiffusionEngine(nn.Module):
                 )
                 image = torch.cat([image, subsequent_frames], dim=2)
 
-            # Add noise based on the selected 
-            if self.noise_mode != 'none':
-                image, noise_masks = self.add_noised_conditions_to_frames(
-                    image, batch['bbox']
-                ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
+            # Add noise based on the selected noise_mode
+            image, noise_masks = self.add_noised_conditions_to_frames(
+                image, batch['bbox']
+            ) if self.noise_mode == 'bbox' else self.add_color_conditions_to_frames(image, batch['mask'])
             
             image = self.encode_first_stage(image, batch)
             image = image.permute(0, 2, 1, 3, 4).contiguous()
-
+            #image = torch.concat([image, torch.zeros_like(z[:, 1:])], dim=1)
             c["concat"] = image
             uc["concat"] = image
             samples = self.sample(c, shape=z.shape[1:], uc=uc, batch_size=N, **sampling_kwargs)
@@ -603,6 +603,12 @@ class SATVideoDiffusionEngine(nn.Module):
                 # Draw bounding boxes on the samples
                 samples_with_bbox = self.draw_annotations(samples.clone(), batch, draw_bbox=True, draw_pose=False)
                 log["samples_bbox"] = samples_with_bbox
+
+                log["inputs_samples_comparison"] = torch.cat([log["inputs"], log["samples_raw"]], dim=4)
+
+                log["inputs_samples_bbox_comparison"] = torch.cat([log["inputs"], log["samples_raw"], log["samples_bbox"]], dim=4)
+
+                log["inputs_samples_segm_comparison"] = torch.cat([log["inputs"], log["samples_raw"], log["samples_segm"]], dim=4)
                 
         return log
     

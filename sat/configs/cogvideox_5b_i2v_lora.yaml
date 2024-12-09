@@ -7,7 +7,8 @@ model:
     noise_last_frame: false
     not_trainable_prefixes: ["all"] ## Using Lora
     pixel_space_loss: false
-    noise_mode: "none" # bbox, segm, none
+    token_compose_loss: true
+    noise_mode: "bbox" # bbox, segm
 
     log_keys:
         - txt
@@ -60,7 +61,6 @@ model:
                         learnable_pos_embed: True
                         hidden_size_head: 64
                         text_length: 226
-                        bbox_length: 4
 
                 lora_config:
                     target: sat.model.finetune.lora2.LoraMixin
@@ -73,10 +73,10 @@ model:
                         text_hidden_size: 4096
 
                 adaln_layer_config:
-                    target: dit_video_concat.AdaLNMixin
+                    target: dit_video_concat.AdaLNMixinWithAttention
                     params:
                         qk_ln: True
-                        bbox_length: 4
+
                 final_layer_config:
                     target: dit_video_concat.FinalLayerMixin
 
@@ -90,16 +90,6 @@ model:
                   target: sgm.modules.encoders.modules.PrecomputedT5Embedder
                   params:
                       max_length: 226
-                - is_trainable: true
-                  input_key: bbox
-                  target: sgm.modules.encoders.modules.BboxTokenEmbedder
-                  params:
-                      max_length: 4
-                      hidden_dim: 512
-                      max_distance: 2
-                      token_dim: 4096
-                      tokens_per_trajectory: 1
-                      num_attn_heads: 8
 
     first_stage_config:
         target: vae_modules.autoencoder.VideoAutoencoderInferenceWrapper
